@@ -1,4 +1,4 @@
-name: NKPlayer Auto Build
+name: NKPlayer Professional Build
 on: [push]
 
 jobs:
@@ -13,16 +13,17 @@ jobs:
         with:
           flutter-version: '3.19.0'
 
-      - name: Auto Generate NKPlayer Files
+      - name: Generate NKPlayer Project
         run: |
-          # Create Flutter Project structure
+          # 1. Create project with specific package name
           flutter create --org com.nareshkushmi --project-name nkplayer .
-          
-          # Overwrite pubspec.yaml
+
+          # 2. Update pubspec.yaml with necessary packages
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer by Naresh Kushmi
+          description: A powerful and accessible audio player by Naresh Kushmi.
           version: 1.0.0+1
+          publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
           dependencies:
@@ -34,51 +35,203 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Overwrite main.dart with English UI
+          # 3. Create a powerful and accessible main.dart
           cat <<EOF > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:audioplayers/audioplayers.dart';
           import 'package:google_fonts/google_fonts.dart';
 
-          void main() => runApp(MaterialApp(
-            debugShowCheckedModeBanner: false,
-            theme: ThemeData.dark(),
-            home: Scaffold(
-              backgroundColor: Color(0xFF121212),
-              appBar: AppBar(
-                title: Text("NK Player", style: GoogleFonts.poppins()), 
-                centerTitle: true, 
-                backgroundColor: Colors.black
-              ),
-              body: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
-                    SizedBox(height: 20),
-                    Text("Welcome to NK Player", style: GoogleFonts.poppins(fontSize: 20)),
-                    Text("By Naresh Kushmi", style: GoogleFonts.poppins(color: Colors.grey)),
-                    SizedBox(height: 40),
-                    ElevatedButton(
-                      onPressed: () {}, 
-                      child: Text("Play Sample Audio"),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
-                    )
-                  ],
+          void main() => runApp(const MaterialApp(
+                title: 'NK Player',
+                debugShowCheckedModeBanner: false,
+                home: NKPlayerHome(),
+              ));
+
+          class NKPlayerHome extends StatefulWidget {
+            const NKPlayerHome({super.key});
+            @override
+            State<NKPlayerHome> createState() => _NKPlayerHomeState();
+          }
+
+          class _NKPlayerHomeState extends State<NKPlayerHome> {
+            final player = AudioPlayer();
+            bool isPlaying = false;
+            Duration duration = Duration.zero;
+            Duration position = Duration.zero;
+
+            // Sample Music URL (You can change this anytime)
+            final String audioUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+
+            @override
+            void initState() {
+              super.initState();
+              _setupAudioListeners();
+            }
+
+            void _setupAudioListeners() {
+              player.onPositionChanged.listen((p) => setState(() => position = p));
+              player.onDurationChanged.listen((d) => setState(() => duration = d));
+              player.onPlayerComplete.listen((_) => setState(() {
+                    isPlaying = false;
+                    position = Duration.zero;
+                  }));
+            }
+
+            Future<void> _handlePlayPause() async {
+              if (isPlaying) {
+                await player.pause();
+              } else {
+                await player.play(UrlSource(audioUrl));
+              }
+              setState(() => isPlaying = !isPlaying);
+            }
+
+            String _formatTime(Duration d) {
+              return d.toString().split('.').first.padLeft(8, "0").substring(2);
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: const Color(0xFF121212),
+                appBar: AppBar(
+                  title: Text("NK Player", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                  centerTitle: true,
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
                 ),
-              ),
-            ),
-          ));
+                body: Semantics(
+                  label: "Main Player Screen",
+                  child: Padding(
+                    padding: const EdgeInsets.all(25.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Album Art Visualization
+                        Container(
+                          height: 300,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Colors.blueAccent, Colors.deepPurple],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(30),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.blueAccent.withOpacity(0.3),
+                                blurRadius: 25,
+                                offset: const Offset(0, 10),
+                              )
+                            ],
+                          ),
+                          child: const Icon(Icons.music_note_rounded, size: 150, color: Colors.white),
+                        ),
+                        const SizedBox(height: 50),
+
+                        // Track Information
+                        Semantics(
+                          label: "Track Title: Sample Audio Stream",
+                          child: Text("Sample Audio Stream", 
+                            style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+                        ),
+                        Text("Produced by Naresh Kushmi", 
+                          style: GoogleFonts.poppins(fontSize: 16, color: Colors.grey[400])),
+                        const SizedBox(height: 30),
+
+                        // Progress Slider
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 4,
+                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                          ),
+                          child: Slider(
+                            activeColor: Colors.blueAccent,
+                            inactiveColor: Colors.grey[800],
+                            min: 0,
+                            max: duration.inSeconds.toDouble(),
+                            value: position.inSeconds.toDouble(),
+                            onChanged: (val) async => await player.seek(Duration(seconds: val.toInt())),
+                          ),
+                        ),
+
+                        // Time Labels
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.between,
+                            children: [
+                              Text(_formatTime(position), style: const TextStyle(color: Colors.white)),
+                              Text(_formatTime(duration), style: const TextStyle(color: Colors.white)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 40),
+
+                        // Control Buttons
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.shuffle, color: Colors.grey),
+                              onPressed: () {},
+                              tooltip: "Shuffle",
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.skip_previous_rounded, size: 45, color: Colors.white),
+                              onPressed: () {},
+                              tooltip: "Previous",
+                            ),
+                            // Play/Pause with Semantics for TalkBack
+                            Semantics(
+                              label: isPlaying ? "Pause button" : "Play button",
+                              button: true,
+                              child: GestureDetector(
+                                onTap: _handlePlayPause,
+                                child: Container(
+                                  height: 80,
+                                  width: 80,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.blueAccent,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                    size: 50,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.skip_next_rounded, size: 45, color: Colors.white),
+                              onPressed: () {},
+                              tooltip: "Next",
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.repeat, color: Colors.grey),
+                              onPressed: () {},
+                              tooltip: "Repeat",
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
           EOF
 
-      - name: Install Dependencies
-        run: flutter pub get
-
       - name: Build APK
-        run: flutter build apk --release
+        run: |
+          flutter pub get
+          flutter build apk --release
 
-      - name: Upload NKPlayer APK (Updated to v4)
+      - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Release-APK
+          name: NKPlayer-Final-v1
           path: build/app/outputs/flutter-apk/app-release.apk
