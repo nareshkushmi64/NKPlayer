@@ -5,19 +5,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
 
-      - name: Auto Generate Project Files
+      - name: Auto Generate NKPlayer Files
         run: |
           # Create Flutter Project structure
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # Overwrite pubspec.yaml with our configuration
+          # Overwrite pubspec.yaml
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer by Naresh Kushmi
@@ -33,7 +34,7 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Overwrite main.dart with English UI Code
+          # Overwrite main.dart with English UI
           cat <<EOF > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:audioplayers/audioplayers.dart';
@@ -44,7 +45,11 @@ jobs:
             theme: ThemeData.dark(),
             home: Scaffold(
               backgroundColor: Color(0xFF121212),
-              appBar: AppBar(title: Text("NK Player", style: GoogleFonts.poppins()), centerTitle: true, backgroundColor: Colors.black),
+              appBar: AppBar(
+                title: Text("NK Player", style: GoogleFonts.poppins()), 
+                centerTitle: true, 
+                backgroundColor: Colors.black
+              ),
               body: Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -72,8 +77,8 @@ jobs:
       - name: Build APK
         run: flutter build apk --release
 
-      - name: Upload NKPlayer APK
-        uses: actions/upload-artifact@v3
+      - name: Upload NKPlayer APK (Updated to v4)
+        uses: actions/upload-artifact@v4
         with:
           name: NKPlayer-Release-APK
           path: build/app/outputs/flutter-apk/app-release.apk
