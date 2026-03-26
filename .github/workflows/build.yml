@@ -1,4 +1,4 @@
-name: NKPlayer - Final Bug Fix
+name: NKPlayer - Final Label and Media Update
 on: [push]
 
 jobs:
@@ -17,11 +17,12 @@ jobs:
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
+          # App name set to NKPlayer
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
 
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer by Naresh Kushmi.
+          description: NKPlayer by Naresh Kushmi with custom media labels.
           version: 1.0.0+1
           publish_to: 'none'
           environment:
@@ -95,7 +96,6 @@ jobs:
             final String name;
             final String path;
             final List<SongModel> songs;
-
             CustomFolder({required this.name, required this.path, required this.songs});
           }
 
@@ -124,11 +124,7 @@ jobs:
               List<CustomFolder> validFolders = [];
               parentPaths.forEach((path, songs) {
                 final folderName = path.split(Platform.pathSeparator).last;
-                validFolders.add(CustomFolder(
-                  name: folderName,
-                  path: path,
-                  songs: songs,
-                ));
+                validFolders.add(CustomFolder(name: folderName, path: path, songs: songs));
               });
               
               validFolders.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -138,12 +134,7 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(
-                  title: Text("Folders", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                  centerTitle: true,
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                ),
+                appBar: AppBar(title: Text("Folders", style: GoogleFonts.poppins(fontWeight: FontWeight.bold))),
                 body: FutureBuilder<List<CustomFolder>>(
                   future: _getFolders(),
                   builder: (context, item) {
@@ -155,18 +146,13 @@ jobs:
                       itemBuilder: (context, index) {
                         final folder = item.data![index];
                         return ListTile(
-                          leading: Container(
-                            height: 50, width: 50,
-                            decoration: BoxDecoration(color: Colors.grey[900], borderRadius: BorderRadius.circular(10)),
-                            child: const Icon(Icons.folder_rounded, color: Colors.amber, size: 30),
-                          ),
-                          title: Text(folder.name, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
-                          subtitle: Text("${folder.songs.length} Songs", style: const TextStyle(color: Colors.grey)),
+                          leading: const Icon(Icons.folder_rounded, color: Colors.amber, size: 30),
+                          title: Text(folder.name, style: GoogleFonts.poppins(fontSize: 18)),
+                          // "Songs" को सट्टा "media files" राखिएको छ
+                          subtitle: Text("${folder.songs.length} media files"),
                           onTap: () {
                             folder.songs.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-                            Navigator.push(context, MaterialPageRoute(
-                              builder: (_) => SongListScreen(folder: folder)
-                            ));
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: folder)));
                           },
                         );
                       },
@@ -184,27 +170,15 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(
-                  title: Text(folder.name, style: GoogleFonts.poppins()),
-                  centerTitle: true,
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                ),
+                appBar: AppBar(title: Text(folder.name, style: GoogleFonts.poppins())),
                 body: ListView.builder(
                   itemCount: folder.songs.length,
                   itemBuilder: (context, index) {
                     final song = folder.songs[index];
                     return ListTile(
-                      leading: Container(
-                        height: 50, width: 50,
-                        decoration: BoxDecoration(color: Colors.blueGrey[900], borderRadius: BorderRadius.circular(10)),
-                        child: const Icon(Icons.music_note_rounded, size: 30, color: Colors.blueAccent),
-                      ),
-                      title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 16)),
-                      subtitle: Text(song.artist ?? "Unknown", style: const TextStyle(color: Colors.grey)),
-                      onTap: () => Navigator.push(context, MaterialPageRoute(
-                        builder: (_) => PlayerScreen(songs: folder.songs, initialIndex: index)
-                      )),
+                      leading: const Icon(Icons.music_note_rounded, color: Colors.blueAccent),
+                      title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: folder.songs, initialIndex: index))),
                     );
                   },
                 ),
@@ -216,7 +190,6 @@ jobs:
             final List<SongModel> songs;
             final int initialIndex;
             const PlayerScreen({super.key, required this.songs, required this.initialIndex});
-
             @override
             State<PlayerScreen> createState() => _PlayerScreenState();
           }
@@ -245,110 +218,70 @@ jobs:
             }
 
             void _togglePlay() async {
-              if (_isPlaying) { await _player.pause(); } 
-              else { await _player.resume(); }
+              if (_isPlaying) { await _player.pause(); } else { await _player.resume(); }
               setState(() => _isPlaying = !_isPlaying);
             }
 
-            void _nextSong() {
-              if (_currentIndex < widget.songs.length - 1) {
-                _currentIndex++;
-                _playCurrentSong();
-              }
-            }
+            void _nextSong() { if (_currentIndex < widget.songs.length - 1) { _currentIndex++; _playCurrentSong(); } }
+            void _prevSong() { if (_currentIndex > 0) { _currentIndex--; _playCurrentSong(); } }
 
-            void _prevSong() {
-              if (_currentIndex > 0) {
-                _currentIndex--;
-                _playCurrentSong();
-              }
-            }
-
-            String _formatTime(Duration d) {
-              return d.toString().split('.').first.padLeft(8, "0").substring(2);
-            }
+            String _formatTime(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
 
             @override
-            void dispose() { 
-              _player.dispose(); 
-              super.dispose(); 
-            }
+            void dispose() { _player.dispose(); super.dispose(); }
 
             @override
             Widget build(BuildContext context) {
               final song = widget.songs[_currentIndex];
               return Scaffold(
-                backgroundColor: const Color(0xFF0A0A0A),
-                appBar: AppBar(
-                  title: const Text("Now Playing"),
-                  centerTitle: true,
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                ),
-                body: Semantics(
-                  label: "Player Screen for ${song.title}",
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 25),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                          height: 280, width: double.infinity,
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(colors: [Colors.blueAccent, Colors.deepPurple], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                            borderRadius: BorderRadius.circular(30),
-                            boxShadow: [BoxShadow(color: Colors.blueAccent.withOpacity(0.3), blurRadius: 20)],
+                appBar: AppBar(title: const Text("Now Playing")),
+                body: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.music_note_rounded, size: 120, color: Colors.blueAccent),
+                      const SizedBox(height: 30),
+                      Text(song.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 30),
+                      Slider(
+                        value: _position.inSeconds.toDouble(),
+                        max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
+                        onChanged: (v) => _player.seek(Duration(seconds: v.toInt())),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [Text(_formatTime(_position)), Text(_formatTime(_duration))],
+                      ),
+                      const SizedBox(height: 40),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          Semantics(
+                            label: "Previous button",
+                            button: true,
+                            excludeSemantics: true,
+                            child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 55), onPressed: _prevSong),
                           ),
-                          child: const Icon(Icons.music_note_rounded, size: 150, color: Colors.white),
-                        ),
-                        const SizedBox(height: 50),
-                        Text(song.title, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
-                        Text(song.artist ?? "Unknown Artist", style: GoogleFonts.poppins(color: Colors.grey[400])),
-                        const SizedBox(height: 30),
-                        SliderTheme(
-                          data: SliderTheme.of(context).copyWith(trackHeight: 4, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8)),
-                          child: Slider(
-                            activeColor: Colors.blueAccent,
-                            inactiveColor: Colors.grey[800],
-                            value: _position.inSeconds.toDouble(),
-                            max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
-                            onChanged: (v) => _player.seek(Duration(seconds: v.toInt())),
+                          Semantics(
+                            label: _isPlaying ? "Pause button" : "Play button",
+                            button: true,
+                            excludeSemantics: true,
+                            child: FloatingActionButton.large(
+                              backgroundColor: Colors.blueAccent,
+                              onPressed: _togglePlay,
+                              child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 50),
+                            ),
                           ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(_formatTime(_position), style: const TextStyle(color: Colors.white70)),
-                              Text(_formatTime(_duration), style: const TextStyle(color: Colors.white70)),
-                            ],
+                          Semantics(
+                            label: "Next button",
+                            button: true,
+                            excludeSemantics: true,
+                            child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 55), onPressed: _nextSong),
                           ),
-                        ),
-                        const SizedBox(height: 40),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            Semantics(
-                              label: "Previous song", button: true,
-                              child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 50, color: Colors.white), onPressed: _prevSong),
-                            ),
-                            Semantics(
-                              label: _isPlaying ? "Pause button" : "Play button", button: true,
-                              child: FloatingActionButton.large(
-                                backgroundColor: Colors.blueAccent,
-                                onPressed: _togglePlay,
-                                child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 60, color: Colors.white),
-                              ),
-                            ),
-                            Semantics(
-                              label: "Next song", button: true,
-                              child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 50, color: Colors.white), onPressed: _nextSong),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               );
@@ -364,5 +297,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Final-BugFix
+          name: NKPlayer-Final-v5
           path: build/app/outputs/flutter-apk/app-release.apk
