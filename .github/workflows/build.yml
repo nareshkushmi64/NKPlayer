@@ -1,4 +1,4 @@
-name: NKPlayer - Folder Library Fixed
+name: NKPlayer - Final Professional Build
 on: [push]
 
 jobs:
@@ -15,13 +15,16 @@ jobs:
 
       - name: Generate NKPlayer Project
         run: |
-          # 1. Create project
+          # 1. Create project with Correct App Name
           flutter create --org com.nareshkushmi --project-name nkplayer .
+          
+          # Change Label in Android Manifest
+          sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
 
           # 2. Update pubspec.yaml
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: Professional folder-based audio player by Naresh Kushmi.
+          description: NKPlayer by Naresh Kushmi.
           version: 1.0.0+1
           publish_to: 'none'
           environment:
@@ -37,8 +40,7 @@ jobs:
             uses-material-design: true
           EOF
 
-          # 3. Add Permissions safely (Android 13+ support)
-          # We use a simple replacement that won't trigger shell errors
+          # 3. Add Permissions
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
@@ -50,7 +52,7 @@ jobs:
               f.write(new_content)
           "
 
-          # 4. Create the final main.dart (escaped for shell safety)
+          # 4. Create main.dart with Accessibility and Folder Filtering
           cat <<'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:on_audio_query/on_audio_query.dart';
@@ -59,7 +61,7 @@ jobs:
           import 'package:google_fonts/google_fonts.dart';
 
           void main() => runApp(MaterialApp(
-                title: 'NK Player',
+                title: 'NKPlayer',
                 debugShowCheckedModeBanner: false,
                 theme: ThemeData.dark(),
                 home: const PermissionHandlerScreen(),
@@ -103,21 +105,25 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: Text("NK Folders", style: GoogleFonts.poppins())),
+                appBar: AppBar(title: Text("Folders", style: GoogleFonts.poppins())),
                 body: FutureBuilder<List<AlbumModel>>(
                   future: _audioQuery.queryAlbums(sortType: AlbumSortType.ALBUM, orderType: OrderType.ASC_OR_SMALLER),
                   builder: (context, item) {
                     if (item.data == null) return const Center(child: CircularProgressIndicator());
-                    if (item.data!.isEmpty) return const Center(child: Text("No Music Folders Found"));
+                    // फिल्टरिङ: केवल गीत भएका फोल्डरहरू मात्र देखाउने
+                    final filteredFolders = item.data!.where((album) => album.numOfSongs > 0).toList();
+                    
+                    if (filteredFolders.isEmpty) return const Center(child: Text("No Music Folders Found"));
+                    
                     return ListView.builder(
-                      itemCount: item.data!.length,
+                      itemCount: filteredFolders.length,
                       itemBuilder: (context, index) {
                         return ListTile(
                           leading: const Icon(Icons.folder, color: Colors.amber),
-                          title: Text(item.data![index].album),
-                          subtitle: Text("${item.data![index].numOfSongs} Songs"),
+                          title: Text(filteredFolders[index].album),
+                          subtitle: Text("${filteredFolders[index].numOfSongs} Songs"),
                           onTap: () => Navigator.push(context, MaterialPageRoute(
-                            builder: (_) => SongListScreen(album: item.data![index])
+                            builder: (_) => SongListScreen(album: filteredFolders[index])
                           )),
                         );
                       },
@@ -223,14 +229,10 @@ jobs:
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Container(
-                        height: 250, width: 250,
-                        decoration: BoxDecoration(color: Colors.blueGrey[900], borderRadius: BorderRadius.circular(20)),
-                        child: const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
-                      ),
+                      const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
                       const SizedBox(height: 30),
-                      Text(song.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
-                      Text(song.artist ?? "Unknown Artist", style: const TextStyle(color: Colors.grey)),
+                      Text(song.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 20),
                       Slider(
                         value: _position.inSeconds.toDouble(),
                         max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
@@ -239,15 +241,24 @@ jobs:
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prevSong),
                           Semantics(
-                            label: _isPlaying ? "Pause" : "Play",
+                            label: "Previous song",
+                            button: true,
+                            child: IconButton(icon: const Icon(Icons.skip_previous, size: 50), onPressed: _prevSong),
+                          ),
+                          Semantics(
+                            label: _isPlaying ? "Pause music" : "Play music",
+                            button: true,
                             child: IconButton(
-                              icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 70, color: Colors.blueAccent),
+                              icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 80, color: Colors.blueAccent),
                               onPressed: _togglePlay
                             ),
                           ),
-                          IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _nextSong),
+                          Semantics(
+                            label: "Next song",
+                            button: true,
+                            child: IconButton(icon: const Icon(Icons.skip_next, size: 50), onPressed: _nextSong),
+                          ),
                         ],
                       ),
                     ],
@@ -266,5 +277,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Library-v2
+          name: NKPlayer-Final
           path: build/app/outputs/flutter-apk/app-release.apk
