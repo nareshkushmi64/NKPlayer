@@ -1,4 +1,4 @@
-name: NKPlayer - Final Folder Grouping Fix
+name: NKPlayer - Final Bug Fix
 on: [push]
 
 jobs:
@@ -15,16 +15,13 @@ jobs:
 
       - name: Generate NKPlayer Project
         run: |
-          # 1. Create project with Correct App Name
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # Change Label in Android Manifest to NKPlayer
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
 
-          # 2. Update pubspec.yaml with full libraries
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer by Naresh Kushmi with physical folder grouping and final refinement.
+          description: NKPlayer by Naresh Kushmi.
           version: 1.0.0+1
           publish_to: 'none'
           environment:
@@ -40,7 +37,6 @@ jobs:
             uses-material-design: true
           EOF
 
-          # 3. Add Permissions safely (Android 13+ support)
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
@@ -52,7 +48,6 @@ jobs:
               f.write(new_content)
           "
 
-          # 4. Create main.dart with physical folder grouping logic, A-Z sort, Full controls, Beautiful UI
           cat <<'EOF' > lib/main.dart
           import 'dart:io';
           import 'package:flutter/material.dart';
@@ -71,7 +66,6 @@ jobs:
                 home: const PermissionHandlerScreen(),
               ));
 
-          // Step 1: Handle Permissions Automatically
           class PermissionHandlerScreen extends StatefulWidget {
             const PermissionHandlerScreen({super.key});
             @override
@@ -97,7 +91,6 @@ jobs:
             }
           }
 
-          // Custom data class for our physical folder view
           class CustomFolder {
             final String name;
             final String path;
@@ -106,7 +99,6 @@ jobs:
             CustomFolder({required this.name, required this.path, required this.songs});
           }
 
-          // Step 2: Show Folders List (custom grouping by physical parent path)
           class FolderListScreen extends StatefulWidget {
             const FolderListScreen({super.key});
             @override
@@ -117,14 +109,11 @@ jobs:
             final OnAudioQuery _audioQuery = OnAudioQuery();
 
             Future<List<CustomFolder>> _getFolders() async {
-              // 1. Query ALL songs
               List<SongModel> allSongs = await _audioQuery.querySongs();
-              
-              // 2. Map of ParentPath -> List of Songs
               Map<String, List<SongModel>> parentPaths = {};
               
               for (var song in allSongs) {
-                if (song.data == null) continue; // Skip if no physical path
+                if (song.data == null) continue;
                 final parentPath = File(song.data).parent.path;
                 if (!parentPaths.containsKey(parentPath)) {
                   parentPaths[parentPath] = [];
@@ -132,10 +121,8 @@ jobs:
                 parentPaths[parentPath]!.add(song);
               }
               
-              // 3. Convert map to CustomFolder objects
               List<CustomFolder> validFolders = [];
               parentPaths.forEach((path, songs) {
-                // Name is last part of the path
                 final folderName = path.split(Platform.pathSeparator).last;
                 validFolders.add(CustomFolder(
                   name: folderName,
@@ -144,9 +131,7 @@ jobs:
                 ));
               });
               
-              // 4. Sort folders by name (A-Z)
               validFolders.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-              
               return validFolders;
             }
 
@@ -178,7 +163,6 @@ jobs:
                           title: Text(folder.name, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
                           subtitle: Text("${folder.songs.length} Songs", style: const TextStyle(color: Colors.grey)),
                           onTap: () {
-                            // Sort songs by title before navigation (A-Z)
                             folder.songs.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
                             Navigator.push(context, MaterialPageRoute(
                               builder: (_) => SongListScreen(folder: folder)
@@ -193,7 +177,6 @@ jobs:
             }
           }
 
-          // Step 3: Show Songs List (from CustomFolder, sorted by Title A-Z)
           class SongListScreen extends StatelessWidget {
             final CustomFolder folder;
             const SongListScreen({super.key, required this.folder});
@@ -229,7 +212,6 @@ jobs:
             }
           }
 
-          // Step 4: Powerful Player Screen (beautiful UI, full controls, accessibility)
           class PlayerScreen extends StatefulWidget {
             final List<SongModel> songs;
             final int initialIndex;
@@ -287,63 +269,10 @@ jobs:
             }
 
             @override
-            void dispose() { _player.dispose(); super.dispose(); }
-
-            @override
-            Widget build(BuildContext context) {
-              final song = widget.songs[_currentIndex];
-              return Scaffold(
-                backgroundColor: const Color(0xFF0A0A0A),
-                appBar: AppBar(
-                  title: const Text("Now Playing"),
-                  centerTitle: true,
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                ),
-                body: Semantics(
-                  label: "Player Screen for ${song.title}",
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 25),
-                    child: Column(
-                      mainAxisAlignment: Main => _currentIndex = widget.initialIndex;
-              _playCurrentSong();
-              _player.onPositionChanged.listen((p) => setState(() => _position = p));
-              _player.onDurationChanged.listen((d) => setState(() => _duration = d));
-              _player.onPlayerComplete.listen((_) => _nextSong());
+            void dispose() { 
+              _player.dispose(); 
+              super.dispose(); 
             }
-
-            Future<void> _playCurrentSong() async {
-              await _player.stop();
-              await _player.play(DeviceFileSource(widget.songs[_currentIndex].data));
-              setState(() => _isPlaying = true);
-            }
-
-            void _togglePlay() async {
-              if (_isPlaying) { await _player.pause(); } 
-              else { await _player.resume(); }
-              setState(() => _isPlaying = !_isPlaying);
-            }
-
-            void _nextSong() {
-              if (_currentIndex < widget.songs.length - 1) {
-                _currentIndex++;
-                _playCurrentSong();
-              }
-            }
-
-            void _prevSong() {
-              if (_currentIndex > 0) {
-                _currentIndex--;
-                _playCurrentSong();
-              }
-            }
-
-            String _formatTime(Duration d) {
-              return d.toString().split('.').first.padLeft(8, "0").substring(2);
-            }
-
-            @override
-            void dispose() { _player.dispose(); super.dispose(); }
 
             @override
             Widget build(BuildContext context) {
@@ -363,7 +292,6 @@ jobs:
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Beautiful Visualization
                         Container(
                           height: 280, width: double.infinity,
                           decoration: BoxDecoration(
@@ -374,14 +302,9 @@ jobs:
                           child: const Icon(Icons.music_note_rounded, size: 150, color: Colors.white),
                         ),
                         const SizedBox(height: 50),
-
-                        // Track Info
                         Text(song.title, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
                         Text(song.artist ?? "Unknown Artist", style: GoogleFonts.poppins(color: Colors.grey[400])),
-                        
                         const SizedBox(height: 30),
-
-                        // Slider Theme
                         SliderTheme(
                           data: SliderTheme.of(context).copyWith(trackHeight: 4, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8)),
                           child: Slider(
@@ -392,8 +315,6 @@ jobs:
                             onChanged: (v) => _player.seek(Duration(seconds: v.toInt())),
                           ),
                         ),
-                        
-                        // Time labels
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                           child: Row(
@@ -405,8 +326,6 @@ jobs:
                           ),
                         ),
                         const SizedBox(height: 40),
-
-                        // Controls Row with updated Semantics
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
@@ -414,8 +333,6 @@ jobs:
                               label: "Previous song", button: true,
                               child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 50, color: Colors.white), onPressed: _prevSong),
                             ),
-                            
-                            // Beautiful Play/Pause Circle
                             Semantics(
                               label: _isPlaying ? "Pause button" : "Play button", button: true,
                               child: FloatingActionButton.large(
@@ -424,7 +341,6 @@ jobs:
                                 child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 60, color: Colors.white),
                               ),
                             ),
-                            
                             Semantics(
                               label: "Next song", button: true,
                               child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 50, color: Colors.white), onPressed: _nextSong),
@@ -448,5 +364,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Final-v4
+          name: NKPlayer-Final-BugFix
           path: build/app/outputs/flutter-apk/app-release.apk
