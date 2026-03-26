@@ -1,4 +1,4 @@
-name: NKPlayer - Final Label and Media Update
+name: NKPlayer - Welcome Dialogue and Accessibility
 on: [push]
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
 
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer by Naresh Kushmi with custom media labels.
+          description: NKPlayer with Welcome Dialogue.
           version: 1.0.0+1
           publish_to: 'none'
           environment:
@@ -34,10 +34,12 @@ jobs:
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
+            shared_preferences: ^2.2.2
           flutter:
             uses-material-design: true
           EOF
 
+          # Permissions logic
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
@@ -56,6 +58,7 @@ jobs:
           import 'package:audioplayers/audioplayers.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
 
           void main() => runApp(MaterialApp(
                 title: 'NKPlayer',
@@ -64,20 +67,75 @@ jobs:
                   primaryColor: Colors.blueAccent,
                   scaffoldBackgroundColor: const Color(0xFF0F0F0F),
                 ),
-                home: const PermissionHandlerScreen(),
+                home: const MainEntryScreen(),
               ));
 
-          class PermissionHandlerScreen extends StatefulWidget {
-            const PermissionHandlerScreen({super.key});
+          // Step 1: Handle Logic to show Dialogue only once
+          class MainEntryScreen extends StatefulWidget {
+            const MainEntryScreen({super.key});
             @override
-            State<PermissionHandlerScreen> createState() => _PermissionHandlerScreenState();
+            State<MainEntryScreen> createState() => _MainEntryScreenState();
           }
 
-          class _PermissionHandlerScreenState extends State<PermissionHandlerScreen> {
+          class _MainEntryScreenState extends State<MainEntryScreen> {
             @override
             void initState() {
               super.initState();
-              _checkPermissions();
+              WidgetsBinding.instance.addPostFrameCallback((_) => _checkFirstTime());
+            }
+
+            Future<void> _checkFirstTime() async {
+              SharedPreferences prefs = await SharedPreferences.getInstance();
+              bool isFirstTime = prefs.getBool('first_time') ?? true;
+
+              if (isFirstTime) {
+                _showWelcomeDialog(prefs);
+              } else {
+                _checkPermissions();
+              }
+            }
+
+            void _showWelcomeDialog(SharedPreferences prefs) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => AlertDialog(
+                  title: const Text("Welcome to NKPlayer", textAlign: TextAlign.center),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("An accessible media player app developed by the Hamro Prayash team.\n"),
+                        const Text("This app has been built with a special focus on visually impaired users, ensuring that there is no compromise on accessibility.\n"),
+                        const Text("Developed by:", style: TextStyle(fontWeight: FontWeight.bold)),
+                        const Text(" • Naresh Kushmi\n"),
+                        const Text("Huge thanks to:", style: TextStyle(fontWeight: FontWeight.bold)),
+                        const Text(" • Sushil Chaudhary\n • Ashutosh Chaudhary\n • Bijay Thapa Magar\n"),
+                        const Text("Special thanks to:", style: TextStyle(fontWeight: FontWeight.bold)),
+                        const Text(" • All Hamro Prayash members.\n"),
+                        const Text("As this is the first public release of the app, there may be some bugs. We kindly ask you to share any issues or feedback you find within our various groups. We are committed to improving the app and adding new features in future updates.\n"),
+                        const Text("Hamro Prayash: Always one step ahead.", style: TextStyle(fontStyle: FontStyle.italic)),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    Semantics(
+                      label: "Next button, proceed to file access",
+                      button: true,
+                      child: TextButton(
+                        onPressed: () async {
+                          await prefs.setBool('first_time', false);
+                          if (mounted) {
+                            Navigator.pop(context);
+                            _checkPermissions();
+                          }
+                        },
+                        child: const Text("Next", style: TextStyle(fontSize: 18, color: Colors.blueAccent)),
+                      ),
+                    ),
+                  ],
+                ),
+              );
             }
 
             Future<void> _checkPermissions() async {
@@ -92,6 +150,7 @@ jobs:
             }
           }
 
+          // Step 2: Custom Folder Logic (unchanged but cleaned)
           class CustomFolder {
             final String name;
             final String path;
@@ -111,24 +170,19 @@ jobs:
             Future<List<CustomFolder>> _getFolders() async {
               List<SongModel> allSongs = await _audioQuery.querySongs();
               Map<String, List<SongModel>> parentPaths = {};
-              
               for (var song in allSongs) {
                 if (song.data == null) continue;
                 final parentPath = File(song.data).parent.path;
-                if (!parentPaths.containsKey(parentPath)) {
-                  parentPaths[parentPath] = [];
-                }
+                if (!parentPaths.containsKey(parentPath)) parentPaths[parentPath] = [];
                 parentPaths[parentPath]!.add(song);
               }
-              
-              List<CustomFolder> validFolders = [];
+              List<CustomFolder> folders = [];
               parentPaths.forEach((path, songs) {
                 final folderName = path.split(Platform.pathSeparator).last;
-                validFolders.add(CustomFolder(name: folderName, path: path, songs: songs));
+                folders.add(CustomFolder(name: folderName, path: path, songs: songs));
               });
-              
-              validFolders.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-              return validFolders;
+              folders.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+              return folders;
             }
 
             @override
@@ -139,16 +193,13 @@ jobs:
                   future: _getFolders(),
                   builder: (context, item) {
                     if (item.data == null) return const Center(child: CircularProgressIndicator());
-                    if (item.data!.isEmpty) return const Center(child: Text("No Music Folders Found"));
-                    
                     return ListView.builder(
                       itemCount: item.data!.length,
                       itemBuilder: (context, index) {
                         final folder = item.data![index];
                         return ListTile(
                           leading: const Icon(Icons.folder_rounded, color: Colors.amber, size: 30),
-                          title: Text(folder.name, style: GoogleFonts.poppins(fontSize: 18)),
-                          // "Songs" को सट्टा "media files" राखिएको छ
+                          title: Text(folder.name),
                           subtitle: Text("${folder.songs.length} media files"),
                           onTap: () {
                             folder.songs.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
@@ -166,18 +217,17 @@ jobs:
           class SongListScreen extends StatelessWidget {
             final CustomFolder folder;
             const SongListScreen({super.key, required this.folder});
-
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: Text(folder.name, style: GoogleFonts.poppins())),
+                appBar: AppBar(title: Text(folder.name)),
                 body: ListView.builder(
                   itemCount: folder.songs.length,
                   itemBuilder: (context, index) {
                     final song = folder.songs[index];
                     return ListTile(
                       leading: const Icon(Icons.music_note_rounded, color: Colors.blueAccent),
-                      title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      title: Text(song.title, maxLines: 1),
                       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: folder.songs, initialIndex: index))),
                     );
                   },
@@ -205,27 +255,20 @@ jobs:
             void initState() {
               super.initState();
               _currentIndex = widget.initialIndex;
-              _playCurrentSong();
+              _playSong();
               _player.onPositionChanged.listen((p) => setState(() => _position = p));
               _player.onDurationChanged.listen((d) => setState(() => _duration = d));
-              _player.onPlayerComplete.listen((_) => _nextSong());
+              _player.onPlayerComplete.listen((_) => _next());
             }
 
-            Future<void> _playCurrentSong() async {
+            void _playSong() async {
               await _player.stop();
               await _player.play(DeviceFileSource(widget.songs[_currentIndex].data));
               setState(() => _isPlaying = true);
             }
 
-            void _togglePlay() async {
-              if (_isPlaying) { await _player.pause(); } else { await _player.resume(); }
-              setState(() => _isPlaying = !_isPlaying);
-            }
-
-            void _nextSong() { if (_currentIndex < widget.songs.length - 1) { _currentIndex++; _playCurrentSong(); } }
-            void _prevSong() { if (_currentIndex > 0) { _currentIndex--; _playCurrentSong(); } }
-
-            String _formatTime(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
+            void _next() { if (_currentIndex < widget.songs.length - 1) { _currentIndex++; _playSong(); } }
+            void _prev() { if (_currentIndex > 0) { _currentIndex--; _playSong(); } }
 
             @override
             void dispose() { _player.dispose(); super.dispose(); }
@@ -236,49 +279,24 @@ jobs:
               return Scaffold(
                 appBar: AppBar(title: const Text("Now Playing")),
                 body: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  padding: const EdgeInsets.all(25),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.music_note_rounded, size: 120, color: Colors.blueAccent),
-                      const SizedBox(height: 30),
-                      Text(song.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 30),
+                      const Icon(Icons.music_note_rounded, size: 100, color: Colors.blueAccent),
+                      const SizedBox(height: 20),
+                      Text(song.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _position.inSeconds.toDouble(),
                         max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
                         onChanged: (v) => _player.seek(Duration(seconds: v.toInt())),
                       ),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [Text(_formatTime(_position)), Text(_formatTime(_duration))],
-                      ),
-                      const SizedBox(height: 40),
-                      Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          Semantics(
-                            label: "Previous button",
-                            button: true,
-                            excludeSemantics: true,
-                            child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 55), onPressed: _prevSong),
-                          ),
-                          Semantics(
-                            label: _isPlaying ? "Pause button" : "Play button",
-                            button: true,
-                            excludeSemantics: true,
-                            child: FloatingActionButton.large(
-                              backgroundColor: Colors.blueAccent,
-                              onPressed: _togglePlay,
-                              child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 50),
-                            ),
-                          ),
-                          Semantics(
-                            label: "Next button",
-                            button: true,
-                            excludeSemantics: true,
-                            child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 55), onPressed: _nextSong),
-                          ),
+                          Semantics(label: "Previous button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 50), onPressed: _prev)),
+                          Semantics(label: _isPlaying ? "Pause button" : "Play button", button: true, excludeSemantics: true, child: IconButton(icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 70), onPressed: () { if (_isPlaying) _player.pause(); else _player.resume(); setState(() => _isPlaying = !_isPlaying); })),
+                          Semantics(label: "Next button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 50), onPressed: _next)),
                         ],
                       ),
                     ],
@@ -297,5 +315,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Final-v5
+          name: NKPlayer-Official-v1
           path: build/app/outputs/flutter-apk/app-release.apk
