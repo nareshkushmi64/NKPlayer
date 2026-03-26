@@ -1,4 +1,4 @@
-name: NKPlayer - Final Professional Build
+name: NKPlayer - Final Refined Build
 on: [push]
 
 jobs:
@@ -15,13 +15,11 @@ jobs:
 
       - name: Generate NKPlayer Project
         run: |
-          # 1. Create project with Correct App Name
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # Change Label in Android Manifest
+          # Change App Name to NKPlayer
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
 
-          # 2. Update pubspec.yaml
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer by Naresh Kushmi.
@@ -40,7 +38,7 @@ jobs:
             uses-material-design: true
           EOF
 
-          # 3. Add Permissions
+          # Add Permissions
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
@@ -52,8 +50,8 @@ jobs:
               f.write(new_content)
           "
 
-          # 4. Create main.dart with Accessibility and Folder Filtering
           cat <<'EOF' > lib/main.dart
+          import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:on_audio_query/on_audio_query.dart';
           import 'package:audioplayers/audioplayers.dart';
@@ -79,14 +77,11 @@ jobs:
               super.initState();
               _checkPermissions();
             }
-
             Future<void> _checkPermissions() async {
-              var status = await Permission.audio.request();
-              if (status.isGranted || await Permission.storage.request().isGranted) {
+              if (await Permission.audio.request().isGranted || await Permission.storage.request().isGranted) {
                 if (mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const FolderListScreen()));
               }
             }
-
             @override
             Widget build(BuildContext context) {
               return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -102,28 +97,41 @@ jobs:
           class _FolderListScreenState extends State<FolderListScreen> {
             final OnAudioQuery _audioQuery = OnAudioQuery();
 
+            // फोल्डर वास्तवमै अस्तित्वमा छ कि छैन भनेर चेक गर्ने फङ्सन
+            Future<List<AlbumModel>> _getValidFolders() async {
+              List<AlbumModel> albums = await _audioQuery.queryAlbums();
+              List<AlbumModel> validAlbums = [];
+              
+              for (var album in albums) {
+                // यो एल्बमका गीतहरू खोज्ने र पहिलो गीतको पाथ चेक गर्ने
+                List<SongModel> songs = await _audioQuery.queryAudiosFrom(AudiosFromType.ALBUM_ID, album.id);
+                if (songs.isNotEmpty) {
+                  if (File(songs[0].data).parent.existsSync()) {
+                    validAlbums.add(album);
+                  }
+                }
+              }
+              return validAlbums;
+            }
+
             @override
             Widget build(BuildContext context) {
               return Scaffold(
                 appBar: AppBar(title: Text("Folders", style: GoogleFonts.poppins())),
                 body: FutureBuilder<List<AlbumModel>>(
-                  future: _audioQuery.queryAlbums(sortType: AlbumSortType.ALBUM, orderType: OrderType.ASC_OR_SMALLER),
+                  future: _getValidFolders(),
                   builder: (context, item) {
                     if (item.data == null) return const Center(child: CircularProgressIndicator());
-                    // फिल्टरिङ: केवल गीत भएका फोल्डरहरू मात्र देखाउने
-                    final filteredFolders = item.data!.where((album) => album.numOfSongs > 0).toList();
-                    
-                    if (filteredFolders.isEmpty) return const Center(child: Text("No Music Folders Found"));
-                    
+                    if (item.data!.isEmpty) return const Center(child: Text("No Music Folders Found"));
                     return ListView.builder(
-                      itemCount: filteredFolders.length,
+                      itemCount: item.data!.length,
                       itemBuilder: (context, index) {
                         return ListTile(
                           leading: const Icon(Icons.folder, color: Colors.amber),
-                          title: Text(filteredFolders[index].album),
-                          subtitle: Text("${filteredFolders[index].numOfSongs} Songs"),
+                          title: Text(item.data![index].album),
+                          subtitle: Text("${item.data![index].numOfSongs} Songs"),
                           onTap: () => Navigator.push(context, MaterialPageRoute(
-                            builder: (_) => SongListScreen(album: filteredFolders[index])
+                            builder: (_) => SongListScreen(album: item.data![index])
                           )),
                         );
                       },
@@ -137,7 +145,6 @@ jobs:
           class SongListScreen extends StatelessWidget {
             final AlbumModel album;
             const SongListScreen({super.key, required this.album});
-
             @override
             Widget build(BuildContext context) {
               return Scaffold(
@@ -152,7 +159,6 @@ jobs:
                         return ListTile(
                           leading: const Icon(Icons.music_note),
                           title: Text(item.data![index].title),
-                          subtitle: Text(item.data![index].artist ?? "Unknown"),
                           onTap: () => Navigator.push(context, MaterialPageRoute(
                             builder: (_) => PlayerScreen(songs: item.data!, initialIndex: index)
                           )),
@@ -202,19 +208,8 @@ jobs:
               setState(() => _isPlaying = !_isPlaying);
             }
 
-            void _nextSong() {
-              if (_currentIndex < widget.songs.length - 1) {
-                _currentIndex++;
-                _playCurrentSong();
-              }
-            }
-
-            void _prevSong() {
-              if (_currentIndex > 0) {
-                _currentIndex--;
-                _playCurrentSong();
-              }
-            }
+            void _nextSong() { if (_currentIndex < widget.songs.length - 1) { _currentIndex++; _playCurrentSong(); } }
+            void _prevSong() { if (_currentIndex > 0) { _currentIndex--; _playCurrentSong(); } }
 
             @override
             void dispose() { _player.dispose(); super.dispose(); }
@@ -229,10 +224,9 @@ jobs:
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
-                      const SizedBox(height: 30),
-                      Text(song.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const Icon(Icons.music_note, size: 80, color: Colors.blueAccent),
                       const SizedBox(height: 20),
+                      Text(song.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _position.inSeconds.toDouble(),
                         max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
@@ -244,20 +238,26 @@ jobs:
                           Semantics(
                             label: "Previous song",
                             button: true,
-                            child: IconButton(icon: const Icon(Icons.skip_previous, size: 50), onPressed: _prevSong),
+                            child: IconButton(
+                              icon: const Icon(Icons.skip_previous, size: 50), 
+                              onPressed: _prevSong,
+                            ),
                           ),
                           Semantics(
                             label: _isPlaying ? "Pause music" : "Play music",
                             button: true,
                             child: IconButton(
                               icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 80, color: Colors.blueAccent),
-                              onPressed: _togglePlay
+                              onPressed: _togglePlay,
                             ),
                           ),
                           Semantics(
                             label: "Next song",
                             button: true,
-                            child: IconButton(icon: const Icon(Icons.skip_next, size: 50), onPressed: _nextSong),
+                            child: IconButton(
+                              icon: const Icon(Icons.skip_next, size: 50), 
+                              onPressed: _nextSong,
+                            ),
                           ),
                         ],
                       ),
@@ -277,5 +277,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Final
+          name: NKPlayer-Final-v3
           path: build/app/outputs/flutter-apk/app-release.apk
