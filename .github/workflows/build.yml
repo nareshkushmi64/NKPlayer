@@ -1,4 +1,4 @@
-name: NKPlayer - Advanced Features Update
+name: NKPlayer - Final Accessibility and Features Fix
 on: [push]
 
 jobs:
@@ -17,12 +17,12 @@ jobs:
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # App Label and Version Update
+          # App Label and Version Update (Version 1.0.2, Code 16)
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer Pro - Accessible Media Player.
+          description: NKPlayer Pro - Final Accessibility Fix.
           version: 1.0.2+16
           publish_to: 'none'
           environment:
@@ -57,7 +57,7 @@ jobs:
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
 
-          // Persistent Player Instance to prevent stopping on Back Button
+          // Persistent Player Manager
           class PlayerManager {
             static final AudioPlayer player = AudioPlayer();
             static List<SongModel> currentPlaylist = [];
@@ -223,7 +223,7 @@ jobs:
                           try { File(_filteredSongs[index].data).deleteSync(); } catch (_) {}
                         }
                         Navigator.pop(context);
-                        Navigator.pop(context); // Refresh effect
+                        Navigator.pop(context);
                       },
                       child: const Text("OK", style: TextStyle(color: Colors.red)),
                     ),
@@ -317,7 +317,7 @@ jobs:
             Widget build(BuildContext context) {
               final song = PlayerManager.currentPlaylist[PlayerManager.currentIndex];
               return PopScope(
-                canPop: true, // Allows going back without stopping music
+                canPop: true,
                 child: Scaffold(
                   appBar: AppBar(title: const Text("Now Playing")),
                   body: Padding(
@@ -339,8 +339,8 @@ jobs:
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(_formatTime(_position)), // Elapsed Time
-                              Text(_formatTime(_duration - _position)), // Remaining Time
+                              Text(_formatTime(_position)),
+                              Text(_formatTime(_duration - _position)),
                             ],
                           ),
                         ),
@@ -348,13 +348,29 @@ jobs:
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
-                            Semantics(label: "Previous button", button: true, child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 55), onPressed: _prev)),
-                            Semantics(label: _isPlaying ? "Pause button" : "Play button", button: true, child: FloatingActionButton.large(
-                              backgroundColor: Colors.blueAccent,
-                              onPressed: () { if (_isPlaying) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _isPlaying = !_isPlaying); },
-                              child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 50),
-                            )),
-                            Semantics(label: "Next button", button: true, child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 55), onPressed: _next)),
+                            // FIXED ACCESSIBILITY BUTTONS
+                            Semantics(
+                              label: "Previous button",
+                              button: true,
+                              excludeSemantics: true,
+                              child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 55), onPressed: _prev),
+                            ),
+                            Semantics(
+                              label: _isPlaying ? "Pause button" : "Play button",
+                              button: true,
+                              excludeSemantics: true,
+                              child: FloatingActionButton.large(
+                                backgroundColor: Colors.blueAccent,
+                                onPressed: () { if (_isPlaying) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _isPlaying = !_isPlaying); },
+                                child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 50),
+                              ),
+                            ),
+                            Semantics(
+                              label: "Next button",
+                              button: true,
+                              excludeSemantics: true,
+                              child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 55), onPressed: _next),
+                            ),
                           ],
                         ),
                       ],
@@ -374,5 +390,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.2
+          name: NKPlayer-v1.0.2-Fixed
           path: build/app/outputs/flutter-apk/app-release.apk
