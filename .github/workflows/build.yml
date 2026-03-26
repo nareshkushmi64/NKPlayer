@@ -1,4 +1,4 @@
-name: NKPlayer - Full Media Library
+name: NKPlayer - Folder Library Fixed
 on: [push]
 
 jobs:
@@ -15,12 +15,13 @@ jobs:
 
       - name: Generate NKPlayer Project
         run: |
+          # 1. Create project
           flutter create --org com.nareshkushmi --project-name nkplayer .
 
-          # 1. Update pubspec.yaml with Query Library
+          # 2. Update pubspec.yaml
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: Professional folder-based audio player.
+          description: Professional folder-based audio player by Naresh Kushmi.
           version: 1.0.0+1
           publish_to: 'none'
           environment:
@@ -36,11 +37,21 @@ jobs:
             uses-material-design: true
           EOF
 
-          # 2. Add Detailed Permissions to AndroidManifest
-          sed -i '/<application/i \    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />' android/app/src/main/AndroidManifest.xml
+          # 3. Add Permissions safely (Android 13+ support)
+          # We use a simple replacement that won't trigger shell errors
+          python3 -c "
+          import os
+          path = 'android/app/src/main/AndroidManifest.xml'
+          with open(path, 'r') as f:
+              content = f.read()
+          perms = '    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />\n'
+          new_content = content.replace('<application', perms + '    <application')
+          with open(path, 'w') as f:
+              f.write(new_content)
+          "
 
-          # 3. Create Multi-Screen main.dart
-          cat <<EOF > lib/main.dart
+          # 4. Create the final main.dart (escaped for shell safety)
+          cat <<'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:on_audio_query/on_audio_query.dart';
           import 'package:audioplayers/audioplayers.dart';
@@ -54,7 +65,6 @@ jobs:
                 home: const PermissionHandlerScreen(),
               ));
 
-          // Step 1: Handle Permissions Automatically
           class PermissionHandlerScreen extends StatefulWidget {
             const PermissionHandlerScreen({super.key});
             @override
@@ -71,7 +81,7 @@ jobs:
             Future<void> _checkPermissions() async {
               var status = await Permission.audio.request();
               if (status.isGranted || await Permission.storage.request().isGranted) {
-                Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const FolderListScreen()));
+                if (mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const FolderListScreen()));
               }
             }
 
@@ -81,7 +91,6 @@ jobs:
             }
           }
 
-          // Step 2: Show Folders List
           class FolderListScreen extends StatefulWidget {
             const FolderListScreen({super.key});
             @override
@@ -119,7 +128,6 @@ jobs:
             }
           }
 
-          // Step 3: Show Songs List (A-Z)
           class SongListScreen extends StatelessWidget {
             final AlbumModel album;
             const SongListScreen({super.key, required this.album});
@@ -151,12 +159,10 @@ jobs:
             }
           }
 
-          // Step 4: Powerful Player Screen
           class PlayerScreen extends StatefulWidget {
             final List<SongModel> songs;
             final int initialIndex;
             const PlayerScreen({super.key, required this.songs, required this.initialIndex});
-
             @override
             State<PlayerScreen> createState() => _PlayerScreenState();
           }
@@ -260,5 +266,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Library-v1
+          name: NKPlayer-Library-v2
           path: build/app/outputs/flutter-apk/app-release.apk
