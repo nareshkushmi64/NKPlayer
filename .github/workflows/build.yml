@@ -1,4 +1,4 @@
-name: NKPlayer - Welcome Dialogue and Accessibility
+name: NKPlayer - Advanced Features Update
 on: [push]
 
 jobs:
@@ -17,13 +17,13 @@ jobs:
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # App name set to NKPlayer
+          # App Label and Version Update
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
-
+          
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer with Welcome Dialogue.
-          version: 1.0.0+1
+          description: NKPlayer Pro - Accessible Media Player.
+          version: 1.0.2+16
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -34,18 +34,16 @@ jobs:
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
-            shared_preferences: ^2.2.2
           flutter:
             uses-material-design: true
           EOF
 
-          # Permissions logic
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
-          perms = '    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />\n'
+          perms = '    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />\n    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" />\n'
           new_content = content.replace('<application', perms + '    <application')
           with open(path, 'w') as f:
               f.write(new_content)
@@ -58,7 +56,13 @@ jobs:
           import 'package:audioplayers/audioplayers.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
-          import 'package:shared_preferences/shared_preferences.dart';
+
+          // Persistent Player Instance to prevent stopping on Back Button
+          class PlayerManager {
+            static final AudioPlayer player = AudioPlayer();
+            static List<SongModel> currentPlaylist = [];
+            static int currentIndex = 0;
+          }
 
           void main() => runApp(MaterialApp(
                 title: 'NKPlayer',
@@ -67,75 +71,20 @@ jobs:
                   primaryColor: Colors.blueAccent,
                   scaffoldBackgroundColor: const Color(0xFF0F0F0F),
                 ),
-                home: const MainEntryScreen(),
+                home: const PermissionHandlerScreen(),
               ));
 
-          // Step 1: Handle Logic to show Dialogue only once
-          class MainEntryScreen extends StatefulWidget {
-            const MainEntryScreen({super.key});
+          class PermissionHandlerScreen extends StatefulWidget {
+            const PermissionHandlerScreen({super.key});
             @override
-            State<MainEntryScreen> createState() => _MainEntryScreenState();
+            State<PermissionHandlerScreen> createState() => _PermissionHandlerScreenState();
           }
 
-          class _MainEntryScreenState extends State<MainEntryScreen> {
+          class _PermissionHandlerScreenState extends State<PermissionHandlerScreen> {
             @override
             void initState() {
               super.initState();
-              WidgetsBinding.instance.addPostFrameCallback((_) => _checkFirstTime());
-            }
-
-            Future<void> _checkFirstTime() async {
-              SharedPreferences prefs = await SharedPreferences.getInstance();
-              bool isFirstTime = prefs.getBool('first_time') ?? true;
-
-              if (isFirstTime) {
-                _showWelcomeDialog(prefs);
-              } else {
-                _checkPermissions();
-              }
-            }
-
-            void _showWelcomeDialog(SharedPreferences prefs) {
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (context) => AlertDialog(
-                  title: const Text("Welcome to NKPlayer", textAlign: TextAlign.center),
-                  content: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text("An accessible media player app developed by the Hamro Prayash team.\n"),
-                        const Text("This app has been built with a special focus on visually impaired users, ensuring that there is no compromise on accessibility.\n"),
-                        const Text("Developed by:", style: TextStyle(fontWeight: FontWeight.bold)),
-                        const Text(" • Naresh Kushmi\n"),
-                        const Text("Huge thanks to:", style: TextStyle(fontWeight: FontWeight.bold)),
-                        const Text(" • Sushil Chaudhary\n • Ashutosh Chaudhary\n • Bijay Thapa Magar\n"),
-                        const Text("Special thanks to:", style: TextStyle(fontWeight: FontWeight.bold)),
-                        const Text(" • All Hamro Prayash members.\n"),
-                        const Text("As this is the first public release of the app, there may be some bugs. We kindly ask you to share any issues or feedback you find within our various groups. We are committed to improving the app and adding new features in future updates.\n"),
-                        const Text("Hamro Prayash: Always one step ahead.", style: TextStyle(fontStyle: FontStyle.italic)),
-                      ],
-                    ),
-                  ),
-                  actions: [
-                    Semantics(
-                      label: "Next button, proceed to file access",
-                      button: true,
-                      child: TextButton(
-                        onPressed: () async {
-                          await prefs.setBool('first_time', false);
-                          if (mounted) {
-                            Navigator.pop(context);
-                            _checkPermissions();
-                          }
-                        },
-                        child: const Text("Next", style: TextStyle(fontSize: 18, color: Colors.blueAccent)),
-                      ),
-                    ),
-                  ],
-                ),
-              );
+              _checkPermissions();
             }
 
             Future<void> _checkPermissions() async {
@@ -150,7 +99,6 @@ jobs:
             }
           }
 
-          // Step 2: Custom Folder Logic (unchanged but cleaned)
           class CustomFolder {
             final String name;
             final String path;
@@ -178,8 +126,7 @@ jobs:
               }
               List<CustomFolder> folders = [];
               parentPaths.forEach((path, songs) {
-                final folderName = path.split(Platform.pathSeparator).last;
-                folders.add(CustomFolder(name: folderName, path: path, songs: songs));
+                folders.add(CustomFolder(name: path.split(Platform.pathSeparator).last, path: path, songs: songs));
               });
               folders.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
               return folders;
@@ -201,10 +148,7 @@ jobs:
                           leading: const Icon(Icons.folder_rounded, color: Colors.amber, size: 30),
                           title: Text(folder.name),
                           subtitle: Text("${folder.songs.length} media files"),
-                          onTap: () {
-                            folder.songs.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: folder)));
-                          },
+                          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: folder))),
                         );
                       },
                     );
@@ -214,21 +158,115 @@ jobs:
             }
           }
 
-          class SongListScreen extends StatelessWidget {
+          class SongListScreen extends StatefulWidget {
             final CustomFolder folder;
             const SongListScreen({super.key, required this.folder});
             @override
+            State<SongListScreen> createState() => _SongListScreenState();
+          }
+
+          class _SongListScreenState extends State<SongListScreen> {
+            final Set<int> _selectedIndices = {};
+            bool _isSelectionMode = false;
+            final TextEditingController _searchController = TextEditingController();
+            List<SongModel> _filteredSongs = [];
+
+            @override
+            void initState() {
+              super.initState();
+              _filteredSongs = widget.folder.songs;
+            }
+
+            void _onSearch(String query) {
+              setState(() {
+                _filteredSongs = widget.folder.songs
+                    .where((song) => song.title.toLowerCase().contains(query.toLowerCase()))
+                    .toList();
+              });
+            }
+
+            void _toggleSelection(int index) {
+              setState(() {
+                if (_selectedIndices.contains(index)) {
+                  _selectedIndices.remove(index);
+                  if (_selectedIndices.isEmpty) _isSelectionMode = false;
+                } else {
+                  _selectedIndices.add(index);
+                  _isSelectionMode = true;
+                }
+              });
+            }
+
+            void _selectAll() {
+              setState(() {
+                if (_selectedIndices.length == _filteredSongs.length) {
+                  _selectedIndices.clear();
+                  _isSelectionMode = false;
+                } else {
+                  _selectedIndices.addAll(Iterable.generate(_filteredSongs.length));
+                  _isSelectionMode = true;
+                }
+              });
+            }
+
+            Future<void> _confirmDelete() async {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text("Delete Permanently?"),
+                  content: const Text("This media will be deleted permanently. This action cannot be undone."),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+                    TextButton(
+                      onPressed: () {
+                        for (var index in _selectedIndices) {
+                          try { File(_filteredSongs[index].data).deleteSync(); } catch (_) {}
+                        }
+                        Navigator.pop(context);
+                        Navigator.pop(context); // Refresh effect
+                      },
+                      child: const Text("OK", style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: Text(folder.name)),
+                appBar: AppBar(
+                  leading: _isSelectionMode ? IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selectedIndices.clear(); _isSelectionMode = false; })) : null,
+                  title: _isSelectionMode 
+                    ? Text("${_selectedIndices.length} / ${_filteredSongs.length} Selected") 
+                    : TextField(
+                        controller: _searchController,
+                        onChanged: _onSearch,
+                        decoration: const InputDecoration(hintText: "Search media...", border: InputBorder.none),
+                      ),
+                  actions: _isSelectionMode ? [
+                    IconButton(icon: const Icon(Icons.select_all), onPressed: _selectAll, tooltip: "Select All"),
+                    IconButton(icon: const Icon(Icons.play_circle_fill), onPressed: () {
+                      List<SongModel> selected = _selectedIndices.map((i) => _filteredSongs[i]).toList();
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: selected, initialIndex: 0)));
+                    }, tooltip: "Play Selected"),
+                    IconButton(icon: const Icon(Icons.delete), onPressed: _confirmDelete, tooltip: "Delete Selected"),
+                  ] : null,
+                ),
                 body: ListView.builder(
-                  itemCount: folder.songs.length,
+                  itemCount: _filteredSongs.length,
                   itemBuilder: (context, index) {
-                    final song = folder.songs[index];
+                    final song = _filteredSongs[index];
+                    final isSelected = _selectedIndices.contains(index);
                     return ListTile(
-                      leading: const Icon(Icons.music_note_rounded, color: Colors.blueAccent),
-                      title: Text(song.title, maxLines: 1),
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: folder.songs, initialIndex: index))),
+                      tileColor: isSelected ? Colors.blueAccent.withOpacity(0.2) : null,
+                      leading: Icon(isSelected ? Icons.check_circle : Icons.music_note_rounded, color: isSelected ? Colors.blueAccent : Colors.grey),
+                      title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      onLongPress: () => _toggleSelection(index),
+                      onTap: () {
+                        if (_isSelectionMode) { _toggleSelection(index); }
+                        else { Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filteredSongs, initialIndex: index))); }
+                      },
                     );
                   },
                 ),
@@ -245,8 +283,6 @@ jobs:
           }
 
           class _PlayerScreenState extends State<PlayerScreen> {
-            final AudioPlayer _player = AudioPlayer();
-            late int _currentIndex;
             bool _isPlaying = false;
             Duration _position = Duration.zero;
             Duration _duration = Duration.zero;
@@ -254,52 +290,75 @@ jobs:
             @override
             void initState() {
               super.initState();
-              _currentIndex = widget.initialIndex;
-              _playSong();
-              _player.onPositionChanged.listen((p) => setState(() => _position = p));
-              _player.onDurationChanged.listen((d) => setState(() => _duration = d));
-              _player.onPlayerComplete.listen((_) => _next());
+              PlayerManager.currentPlaylist = widget.songs;
+              PlayerManager.currentIndex = widget.initialIndex;
+              _setupPlayer();
+              _playCurrent();
             }
 
-            void _playSong() async {
-              await _player.stop();
-              await _player.play(DeviceFileSource(widget.songs[_currentIndex].data));
+            void _setupPlayer() {
+              PlayerManager.player.onPositionChanged.listen((p) => setState(() => _position = p));
+              PlayerManager.player.onDurationChanged.listen((d) => setState(() => _duration = d));
+              PlayerManager.player.onPlayerComplete.listen((_) => _next());
+            }
+
+            void _playCurrent() async {
+              await PlayerManager.player.stop();
+              await PlayerManager.player.play(DeviceFileSource(PlayerManager.currentPlaylist[PlayerManager.currentIndex].data));
               setState(() => _isPlaying = true);
             }
 
-            void _next() { if (_currentIndex < widget.songs.length - 1) { _currentIndex++; _playSong(); } }
-            void _prev() { if (_currentIndex > 0) { _currentIndex--; _playSong(); } }
+            void _next() { if (PlayerManager.currentIndex < PlayerManager.currentPlaylist.length - 1) { PlayerManager.currentIndex++; _playCurrent(); } }
+            void _prev() { if (PlayerManager.currentIndex > 0) { PlayerManager.currentIndex--; _playCurrent(); } }
 
-            @override
-            void dispose() { _player.dispose(); super.dispose(); }
+            String _formatTime(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
 
             @override
             Widget build(BuildContext context) {
-              final song = widget.songs[_currentIndex];
-              return Scaffold(
-                appBar: AppBar(title: const Text("Now Playing")),
-                body: Padding(
-                  padding: const EdgeInsets.all(25),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.music_note_rounded, size: 100, color: Colors.blueAccent),
-                      const SizedBox(height: 20),
-                      Text(song.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                      Slider(
-                        value: _position.inSeconds.toDouble(),
-                        max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
-                        onChanged: (v) => _player.seek(Duration(seconds: v.toInt())),
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          Semantics(label: "Previous button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 50), onPressed: _prev)),
-                          Semantics(label: _isPlaying ? "Pause button" : "Play button", button: true, excludeSemantics: true, child: IconButton(icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 70), onPressed: () { if (_isPlaying) _player.pause(); else _player.resume(); setState(() => _isPlaying = !_isPlaying); })),
-                          Semantics(label: "Next button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 50), onPressed: _next)),
-                        ],
-                      ),
-                    ],
+              final song = PlayerManager.currentPlaylist[PlayerManager.currentIndex];
+              return PopScope(
+                canPop: true, // Allows going back without stopping music
+                child: Scaffold(
+                  appBar: AppBar(title: const Text("Now Playing")),
+                  body: Padding(
+                    padding: const EdgeInsets.all(25),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.music_note_rounded, size: 120, color: Colors.blueAccent),
+                        const SizedBox(height: 30),
+                        Text(song.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 40),
+                        Slider(
+                          value: _position.inSeconds.toDouble(),
+                          max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
+                          onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt())),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(_formatTime(_position)), // Elapsed Time
+                              Text(_formatTime(_duration - _position)), // Remaining Time
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 40),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            Semantics(label: "Previous button", button: true, child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 55), onPressed: _prev)),
+                            Semantics(label: _isPlaying ? "Pause button" : "Play button", button: true, child: FloatingActionButton.large(
+                              backgroundColor: Colors.blueAccent,
+                              onPressed: () { if (_isPlaying) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _isPlaying = !_isPlaying); },
+                              child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 50),
+                            )),
+                            Semantics(label: "Next button", button: true, child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 55), onPressed: _next)),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );
@@ -315,5 +374,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Official-v1
+          name: NKPlayer-v1.0.2
           path: build/app/outputs/flutter-apk/app-release.apk
