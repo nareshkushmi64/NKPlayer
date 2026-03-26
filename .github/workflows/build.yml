@@ -15,10 +15,10 @@ jobs:
 
       - name: Generate NKPlayer Project
         run: |
-          # 1. Create project with specific package name
+          # 1. Create project
           flutter create --org com.nareshkushmi --project-name nkplayer .
 
-          # 2. Update pubspec.yaml with necessary packages
+          # 2. Update pubspec.yaml
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: A powerful and accessible audio player by Naresh Kushmi.
@@ -35,7 +35,7 @@ jobs:
             uses-material-design: true
           EOF
 
-          # 3. Create a powerful and accessible main.dart
+          # 3. Create fixed and powerful main.dart
           cat <<EOF > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:audioplayers/audioplayers.dart';
@@ -59,7 +59,6 @@ jobs:
             Duration duration = Duration.zero;
             Duration position = Duration.zero;
 
-            // Sample Music URL (You can change this anytime)
             final String audioUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
 
             @override
@@ -107,7 +106,6 @@ jobs:
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Album Art Visualization
                         Container(
                           height: 300,
                           width: double.infinity,
@@ -129,8 +127,6 @@ jobs:
                           child: const Icon(Icons.music_note_rounded, size: 150, color: Colors.white),
                         ),
                         const SizedBox(height: 50),
-
-                        // Track Information
                         Semantics(
                           label: "Track Title: Sample Audio Stream",
                           child: Text("Sample Audio Stream", 
@@ -139,8 +135,6 @@ jobs:
                         Text("Produced by Naresh Kushmi", 
                           style: GoogleFonts.poppins(fontSize: 16, color: Colors.grey[400])),
                         const SizedBox(height: 30),
-
-                        // Progress Slider
                         SliderTheme(
                           data: SliderTheme.of(context).copyWith(
                             trackHeight: 4,
@@ -155,12 +149,10 @@ jobs:
                             onChanged: (val) async => await player.seek(Duration(seconds: val.toInt())),
                           ),
                         ),
-
-                        // Time Labels
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                           child: Row(
-                            mainAxisAlignment: MainAxisAlignment.between,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween, // यो सच्याइएको छ
                             children: [
                               Text(_formatTime(position), style: const TextStyle(color: Colors.white)),
                               Text(_formatTime(duration), style: const TextStyle(color: Colors.white)),
@@ -168,8 +160,6 @@ jobs:
                           ),
                         ),
                         const SizedBox(height: 40),
-
-                        // Control Buttons
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
@@ -183,7 +173,6 @@ jobs:
                               onPressed: () {},
                               tooltip: "Previous",
                             ),
-                            // Play/Pause with Semantics for TalkBack
                             Semantics(
                               label: isPlaying ? "Pause button" : "Play button",
                               button: true,
@@ -233,5 +222,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-Final-v1
+          name: NKPlayer-Release-v1
           path: build/app/outputs/flutter-apk/app-release.apk
