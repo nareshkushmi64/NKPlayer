@@ -1,0 +1,79 @@
+name: NKPlayer Auto Build
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+
+      - name: Auto Generate Project Files
+        run: |
+          # Create Flutter Project structure
+          flutter create --org com.nareshkushmi --project-name nkplayer .
+          
+          # Overwrite pubspec.yaml with our configuration
+          cat <<EOF > pubspec.yaml
+          name: nkplayer
+          description: NKPlayer by Naresh Kushmi
+          version: 1.0.0+1
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          dependencies:
+            flutter:
+              sdk: flutter
+            audioplayers: ^5.2.1
+            google_fonts: ^6.1.0
+          flutter:
+            uses-material-design: true
+          EOF
+
+          # Overwrite main.dart with English UI Code
+          cat <<EOF > lib/main.dart
+          import 'package:flutter/material.dart';
+          import 'package:audioplayers/audioplayers.dart';
+          import 'package:google_fonts/google_fonts.dart';
+
+          void main() => runApp(MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData.dark(),
+            home: Scaffold(
+              backgroundColor: Color(0xFF121212),
+              appBar: AppBar(title: Text("NK Player", style: GoogleFonts.poppins()), centerTitle: true, backgroundColor: Colors.black),
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
+                    SizedBox(height: 20),
+                    Text("Welcome to NK Player", style: GoogleFonts.poppins(fontSize: 20)),
+                    Text("By Naresh Kushmi", style: GoogleFonts.poppins(color: Colors.grey)),
+                    SizedBox(height: 40),
+                    ElevatedButton(
+                      onPressed: () {}, 
+                      child: Text("Play Sample Audio"),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                    )
+                  ],
+                ),
+              ),
+            ),
+          ));
+          EOF
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Upload NKPlayer APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: NKPlayer-Release-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
