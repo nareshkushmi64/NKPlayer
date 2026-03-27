@@ -1,4 +1,4 @@
-name: NKPlayer - Bug Fix & Android 16 Stable
+name: NKPlayer - Android 16 Permission Fix
 on: [push]
 
 jobs:
@@ -19,11 +19,11 @@ jobs:
           rm -rf android/
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # 2. Update pubspec.yaml (Version 1.0.9+25)
+          # 2. Update pubspec.yaml (Version 1.0.9+27)
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer Pro - Ultimate Stability.
-          version: 1.0.9+25
+          description: NKPlayer Pro - Ultimate Permission Fix.
+          version: 1.0.9+27
           publish_to: 'none'
           environment:
             sdk: '>=3.3.0 <4.0.0'
@@ -35,11 +35,12 @@ jobs:
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             path: ^1.9.0
+            device_info_plus: ^10.1.0
           flutter:
             uses-material-design: true
           EOF
 
-          # 3. Stable Android Manifest
+          # 3. Comprehensive Android Manifest (Added All Permissions)
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.nareshkushmi.nkplayer">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -86,50 +87,45 @@ jobs:
           class MainActivity: FlutterActivity() {}
           EOF
 
-          # 5. Fixed main.dart (Corrected seekToNext/Previous)
+          # 5. Fixed main.dart (Forceful Permission Request)
           cat <<'EOF' > lib/main.dart
           import 'dart:async';
+          import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:just_audio/just_audio.dart';
           import 'package:audio_service/audio_service.dart';
           import 'package:on_audio_query/on_audio_query.dart';
           import 'package:path/path.dart' as p;
           import 'package:permission_handler/permission_handler.dart';
+          import 'package:device_info_plus/device_info_plus.dart';
 
-          late AudioHandler _handler;
+          AudioHandler? _handler;
           final _query = OnAudioQuery();
 
-          Future<void> main() async {
-            WidgetsFlutterBinding.ensureInitialized();
-            _handler = await AudioService.init(
-              builder: () => MyAudioHandler(),
-              config: const AudioServiceConfig(
-                androidNotificationChannelId: 'com.nareshkushmi.nkplayer.audio',
-                androidNotificationChannelName: 'NKPlayer Music',
-                androidNotificationOngoing: true,
-              ),
-            );
-            runApp(const MaterialApp(home: PermissionGate(), debugShowCheckedModeBanner: false));
+          void main() {
+            runZonedGuarded(() async {
+              WidgetsFlutterBinding.ensureInitialized();
+              runApp(const MaterialApp(home: PermissionScreen(), debugShowCheckedModeBanner: false));
+              _handler = await AudioService.init(
+                builder: () => MyAudioHandler(),
+                config: const AudioServiceConfig(
+                  androidNotificationChannelId: 'com.nareshkushmi.nkplayer.audio',
+                  androidNotificationChannelName: 'NKPlayer Music',
+                ),
+              );
+            }, (e, s) => debugPrint(e.toString()));
           }
 
           class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             final _player = AudioPlayer();
-            
             MyAudioHandler() {
               _player.playerStateStream.map(_transformEvent).pipe(playbackState);
               _player.currentIndexStream.listen((index) {
-                if (index != null && queue.value.isNotEmpty) {
-                  mediaItem.add(queue.value[index]);
-                }
+                if (index != null && queue.value.isNotEmpty) mediaItem.add(queue.value[index]);
               });
             }
-
             PlaybackState _transformEvent(PlayerState event) => PlaybackState(
-              controls: [
-                MediaControl.skipToPrevious,
-                if (event.playing) MediaControl.pause else MediaControl.play,
-                MediaControl.skipToNext
-              ],
+              controls: [MediaControl.skipToPrevious, if (event.playing) MediaControl.pause else MediaControl.play, MediaControl.skipToNext],
               systemActions: const {MediaAction.seek},
               androidCompactActionIndices: const [0, 1, 2],
               processingState: const {
@@ -141,67 +137,90 @@ jobs:
               }[event.processingState]!,
               playing: event.playing,
               updatePosition: _player.position,
-              bufferedPosition: _player.bufferedPosition,
             );
-
             @override Future<void> play() => _player.play();
             @override Future<void> pause() => _player.pause();
-            
-            // FIX: Changed skipToNext to seekToNext
             @override Future<void> skipToNext() => _player.seekToNext();
             @override Future<void> skipToPrevious() => _player.seekToPrevious();
             @override Future<void> seek(Duration pos) => _player.seek(pos);
-
+            
             Future<void> loadPlaylist(List<MediaItem> items, int index) async {
-              try {
-                final sources = items.map((item) => AudioSource.file(item.extras!['path'])).toList();
-                queue.add(items);
-                mediaItem.add(items[index]);
-                await _player.setAudioSource(
-                  ConcatenatingAudioSource(children: sources),
-                  initialIndex: index,
-                );
-                _player.play();
-              } catch (e) {
-                debugPrint("Playback Error: $e");
+              final sources = items.map((item) => AudioSource.file(item.extras!['path'])).toList();
+              queue.add(items);
+              mediaItem.add(items[index]);
+              await _player.setAudioSource(ConcatenatingAudioSource(children: sources), initialIndex: index);
+              _player.play();
+            }
+          }
+
+          class PermissionScreen extends StatefulWidget {
+            const PermissionScreen({super.key});
+            @override State<PermissionScreen> createState() => _PermissionScreenState();
+          }
+
+          class _PermissionScreenState extends State<PermissionScreen> {
+            @override void initState() { super.initState(); _ask(); }
+
+            _ask() async {
+              // Wait for handler
+              while (_handler == null) await Future.delayed(const Duration(milliseconds: 200));
+
+              if (Platform.isAndroid) {
+                final deviceInfo = await DeviceInfoPlugin().androidInfo;
+                if (deviceInfo.version.sdkInt >= 33) {
+                  // Android 13, 14, 15, 16
+                  await [Permission.audio, Permission.notification].request();
+                } else {
+                  // Older Androids
+                  await Permission.storage.request();
+                }
+              }
+
+              // Double check with on_audio_query
+              bool status = await _query.permissionsStatus();
+              if (!status) await _query.checkAndRequest();
+
+              if (mounted) {
+                Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderList()));
               }
             }
-          }
 
-          class PermissionGate extends StatefulWidget {
-            const PermissionGate({super.key});
-            @override State<PermissionGate> createState() => _PermissionGateState();
-          }
-
-          class _PermissionGateState extends State<PermissionGate> {
-            @override void initState() { super.initState(); _check(); }
-            _check() async {
-              await [Permission.audio, Permission.notification].request();
-              bool status = await _query.permissionsStatus();
-              if (!status) status = await _query.checkAndRequest();
-              if (status && mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderList()));
-            }
-            @override Widget build(BuildContext context) => const Scaffold(body: Center(child: CircularProgressIndicator()));
+            @override
+            Widget build(BuildContext context) => const Scaffold(
+              body: Center(child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.security, size: 80, color: Colors.blue),
+                  SizedBox(height: 20),
+                  Text("Granting Permissions..."),
+                  SizedBox(height: 10),
+                  CircularProgressIndicator(),
+                ],
+              )),
+            );
           }
 
           class FolderList extends StatelessWidget {
             const FolderList({super.key});
             @override Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: const Text("NKPlayer Folders")),
+                appBar: AppBar(title: const Text("NKPlayer Folders"), backgroundColor: Colors.blue, foregroundColor: Colors.white),
                 body: FutureBuilder<List<SongModel>>(
                   future: _query.querySongs(),
                   builder: (context, snap) {
-                    if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+                    if (snap.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                    if (!snap.hasData || snap.data!.isEmpty) return const Center(child: Text("No Music Found. Please add music to your phone."));
+
                     Map<String, List<SongModel>> folders = {};
                     for (var song in snap.data!) {
                       folders.putIfAbsent(p.dirname(song.data), () => []).add(song);
                     }
                     var paths = folders.keys.toList();
+
                     return ListView.builder(
                       itemCount: paths.length,
                       itemBuilder: (context, i) => ListTile(
-                        leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
+                        leading: const Icon(Icons.folder, color: Colors.amber, size: 40),
                         title: Text(p.basename(paths[i])),
                         subtitle: Text("${folders[paths[i]]!.length} Songs"),
                         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongList(folderName: p.basename(paths[i]), songs: folders[paths[i]]!))),
@@ -224,12 +243,12 @@ jobs:
                 body: ListView.builder(
                   itemCount: songs.length,
                   itemBuilder: (context, i) => ListTile(
-                    leading: const Icon(Icons.music_note, color: Colors.orange),
+                    leading: const Icon(Icons.music_note, color: Colors.blue),
                     title: Text(songs[i].title, maxLines: 1),
                     onTap: () {
                       final items = songs.map((s) => MediaItem(id: s.id.toString(), title: s.title, extras: {'path': s.data})).toList();
                       Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerPage()));
-                      (_handler as MyAudioHandler).loadPlaylist(items, i);
+                      if (_handler != null) (_handler as MyAudioHandler).loadPlaylist(items, i);
                     },
                   ),
                 ),
@@ -242,26 +261,26 @@ jobs:
               return Scaffold(
                 appBar: AppBar(title: const Text("Now Playing")),
                 body: StreamBuilder<MediaItem?>(
-                  stream: _handler.mediaItem,
+                  stream: _handler?.mediaItem,
                   builder: (context, snap) {
                     final item = snap.data;
-                    if (item == null) return const Center(child: CircularProgressIndicator());
+                    if (item == null) return const Center(child: Text("Loading..."));
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.music_note, size: 120, color: Colors.blue),
+                          const Icon(Icons.music_note, size: 100, color: Colors.blue),
                           Padding(padding: const EdgeInsets.all(20), child: Text(item.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
                           StreamBuilder<PlaybackState>(
-                            stream: _handler.playbackState,
+                            stream: _handler?.playbackState,
                             builder: (context, pSnap) {
                               final playing = pSnap.data?.playing ?? false;
                               return Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  IconButton(icon: const Icon(Icons.skip_previous, size: 50), onPressed: _handler.skipToPrevious),
-                                  IconButton(icon: Icon(playing ? Icons.pause_circle : Icons.play_circle, size: 70, color: Colors.blue), onPressed: playing ? _handler.pause : _handler.play),
-                                  IconButton(icon: const Icon(Icons.skip_next, size: 50), onPressed: _handler.skipToNext),
+                                  IconButton(icon: const Icon(Icons.skip_previous, size: 50), onPressed: _handler?.skipToPrevious),
+                                  IconButton(icon: Icon(playing ? Icons.pause_circle : Icons.play_circle, size: 70, color: Colors.blue), onPressed: playing ? _handler?.pause : _handler?.play),
+                                  IconButton(icon: const Icon(Icons.skip_next, size: 50), onPressed: _handler?.skipToNext),
                                 ],
                               );
                             },
@@ -284,5 +303,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.9-Android16-Stable
+          name: NKPlayer-v1.0.9-Android16-PermFix
           path: build/app/outputs/flutter-apk/app-release.apk
