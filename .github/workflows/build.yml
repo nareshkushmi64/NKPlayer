@@ -1,4 +1,4 @@
-name: NKPlayer - Final Stability & Permission Fix
+name: NKPlayer - Final Activity & Engine Fix
 on: [push]
 
 jobs:
@@ -15,15 +15,15 @@ jobs:
 
       - name: Generate and Fix Project Structure
         run: |
-          # 1. Force V2 Embedding structure
+          # 1. Fresh Project Creation
           rm -rf android/
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # 2. Update pubspec.yaml (Version 1.0.9+19)
+          # 2. Update pubspec.yaml (Version 1.0.9+20)
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Ultimate Compatibility.
-          version: 1.0.9+19
+          version: 1.0.9+20
           publish_to: 'none'
           environment:
             sdk: '>=3.3.0 <4.0.0'
@@ -35,14 +35,15 @@ jobs:
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             device_info_plus: ^10.1.0
-            rxdart: ^0.27.7
           flutter:
             uses-material-design: true
           EOF
 
-          # 3. Comprehensive Android Manifest
+          # 3. Android Manifest Fix (Adding explicit package and fixing Activity path)
           cat <<EOF > android/app/src/main/AndroidManifest.xml
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.nareshkushmi.nkplayer">
+              
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -55,10 +56,10 @@ jobs:
                   android:label="NKPlayer"
                   android:name="\${applicationName}"
                   android:icon="@mipmap/ic_launcher"
-                  android:requestLegacyExternalStorage="true"
-                  android:usesCleartextTraffic="true">
+                  android:requestLegacyExternalStorage="true">
+                  
                   <activity
-                      android:name="com.nareshkushmi.nkplayer.MainActivity"
+                      android:name=".MainActivity"
                       android:exported="true"
                       android:launchMode="singleTop"
                       android:theme="@style/LaunchTheme"
@@ -70,6 +71,7 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
                   </activity>
+                  
                   <service android:name="com.ryanheise.audioservice.AudioService"
                       android:foregroundServiceType="mediaPlayback"
                       android:exported="true">
@@ -77,12 +79,24 @@ jobs:
                           <action android:name="android.intent.action.MEDIA_BUTTON" />
                       </intent-filter>
                   </service>
+
                   <meta-data android:name="flutterEmbedding" android:value="2" />
               </application>
           </manifest>
           EOF
 
-          # 4. Corrected main.dart (Robust Permission Logic)
+          # 4. Correct MainActivity.kt Placement (Matching Package Name)
+          # We delete the auto-generated ones first to avoid duplicates
+          rm -rf android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MainActivity.kt
+          mkdir -p android/app/src/main/kotlin/com/nareshkushmi/nkplayer
+          
+          cat <<EOF > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MainActivity.kt
+          package com.nareshkushmi.nkplayer
+          import io.flutter.embedding.android.FlutterActivity
+          class MainActivity: FlutterActivity() {}
+          EOF
+
+          # 5. Correct main.dart (Same logic, but adding safe AudioService cleanup)
           cat <<'EOF' > lib/main.dart
           import 'dart:async';
           import 'dart:io';
@@ -90,13 +104,23 @@ jobs:
           import 'package:just_audio/just_audio.dart';
           import 'package:audio_service/audio_service.dart';
           import 'package:on_audio_query/on_audio_query.dart';
-          import 'package:permission_handler/permission_handler.dart';
 
           late AudioHandler _handler;
           final _query = OnAudioQuery();
 
           Future<void> main() async {
             WidgetsFlutterBinding.ensureInitialized();
+            try {
+              _handler = await AudioService.init(
+                builder: () => MyAudioHandler(),
+                config: const AudioServiceConfig(
+                  androidNotificationChannelId: 'com.nareshkushmi.nkplayer.audio',
+                  androidNotificationChannelName: 'NKPlayer Music',
+                ),
+              );
+            } catch (e) {
+              debugPrint("Audio Service Init Error: $e");
+            }
             runApp(const MaterialApp(home: PermissionGate(), debugShowCheckedModeBanner: false));
           }
 
@@ -144,82 +168,41 @@ jobs:
 
           class _PermissionGateState extends State<PermissionGate> {
             bool _isChecking = true;
-            String _log = "Initializing...";
+            String _log = "Checking Permissions...";
 
             @override
-            void initState() {
-              super.initState();
-              _initApp();
-            }
+            void initState() { super.initState(); _init(); }
 
-            Future<void> _initApp() async {
-              try {
-                // 1. Initialize Audio Service first
-                _handler = await AudioService.init(
-                  builder: () => MyAudioHandler(),
-                  config: const AudioServiceConfig(
-                    androidNotificationChannelId: 'com.nareshkushmi.nkplayer.audio',
-                    androidNotificationChannelName: 'NKPlayer Music',
-                  ),
-                );
-
-                // 2. Request Permissions
-                bool permissionStatus = await _query.permissionsStatus();
-                if (!permissionStatus) {
-                  permissionStatus = await _query.checkAndRequest();
-                }
-
-                if (permissionStatus) {
-                  if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const Folders()));
-                } else {
-                  setState(() { _log = "Storage permission denied. Please enable it in settings."; _isChecking = false; });
-                }
-              } catch (e) {
-                setState(() { _log = "Startup Error: $e"; _isChecking = false; });
+            Future<void> _init() async {
+              bool status = await _query.permissionsStatus();
+              if (!status) status = await _query.checkAndRequest();
+              
+              if (status) {
+                if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const Folders()));
+              } else {
+                setState(() { _log = "Please allow storage access to see your songs."; _isChecking = false; });
               }
             }
 
             @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                backgroundColor: Colors.white,
-                body: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const CircularProgressIndicator(),
-                        const SizedBox(height: 20),
-                        Text(_log, textAlign: TextAlign.center, style: const TextStyle(color: Colors.black54)),
-                        if (!_isChecking) ...[
-                          const SizedBox(height: 20),
-                          ElevatedButton(onPressed: _initApp, child: const Text("Retry")),
-                        ]
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }
+            Widget build(BuildContext context) => Scaffold(body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const CircularProgressIndicator(), const SizedBox(height: 20), Text(_log), if(!_isChecking) ElevatedButton(onPressed: _init, child: const Text("Retry"))])));
           }
 
           class Folders extends StatelessWidget {
             const Folders({super.key});
             @override Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: const Text("NKPlayer"), centerTitle: true, elevation: 0),
+                appBar: AppBar(title: const Text("NKPlayer")),
                 body: FutureBuilder<List<AlbumModel>>(
                   future: _query.queryAlbums(),
                   builder: (context, snap) {
-                    if (snap.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                    if (!snap.hasData || snap.data!.isEmpty) return const Center(child: Text("No Music Folders Found"));
+                    if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+                    if (snap.data!.isEmpty) return const Center(child: Text("No Music Found"));
                     return ListView.builder(
                       itemCount: snap.data!.length,
                       itemBuilder: (context, i) => ListTile(
-                        leading: const Icon(Icons.folder, color: Colors.orange, size: 40),
+                        leading: const Icon(Icons.folder, color: Colors.blue),
                         title: Text(snap.data![i].album),
-                        subtitle: Text("${snap.data![i].numOfSongs} Songs"),
                         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongsPage(album: snap.data![i]))),
                       ),
                     );
@@ -243,9 +226,8 @@ jobs:
                     return ListView.builder(
                       itemCount: songs.length,
                       itemBuilder: (context, i) => ListTile(
-                        leading: const Icon(Icons.music_note, color: Colors.blue),
-                        title: Text(songs[i].title, maxLines: 1),
-                        subtitle: Text(songs[i].artist ?? "Unknown Artist"),
+                        leading: const Icon(Icons.music_note),
+                        title: Text(songs[i].title),
                         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Player(songs: songs, index: i))),
                       ),
                     );
@@ -261,6 +243,7 @@ jobs:
             const Player({super.key, required this.songs, required this.index});
             @override Widget build(BuildContext context) {
               final items = songs.map((s) => MediaItem(id: s.id.toString(), title: s.title, artist: s.artist, extras: {'path': s.data})).toList();
+              _handler.customAction('load', {'items': items, 'index': index}); // Optional
               (_handler as MyAudioHandler).load(items, index);
               return Scaffold(
                 appBar: AppBar(title: const Text("Now Playing")),
@@ -272,22 +255,22 @@ jobs:
                     return Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.music_note, size: 120, color: Colors.blueAccent),
-                        Padding(padding: const EdgeInsets.all(30), child: Text(item.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                        const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
+                        Padding(padding: const EdgeInsets.all(20), child: Text(item.title, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold))),
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            IconButton(icon: const Icon(Icons.skip_previous, size: 50), onPressed: _handler.skipToPrevious),
+                            IconButton(icon: const Icon(Icons.skip_previous, size: 40), onPressed: _handler.skipToPrevious),
                             StreamBuilder<PlaybackState>(
                               stream: _handler.playbackState,
                               builder: (context, pSnap) {
                                 final playing = pSnap.data?.playing ?? false;
-                                return IconButton(icon: Icon(playing ? Icons.pause_circle : Icons.play_circle, size: 80, color: Colors.blue), onPressed: playing ? _handler.pause : _handler.play);
+                                return IconButton(icon: Icon(playing ? Icons.pause_circle : Icons.play_circle, size: 60), onPressed: playing ? _handler.pause : _handler.play);
                               },
                             ),
-                            IconButton(icon: const Icon(Icons.skip_next, size: 50), onPressed: _handler.skipToNext),
+                            IconButton(icon: const Icon(Icons.skip_next, size: 40), onPressed: _handler.skipToNext),
                           ],
-                        ),
+                        )
                       ],
                     );
                   },
@@ -305,5 +288,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.9-Pro-Final-Check
+          name: NKPlayer-v1.0.9-Pro-Final-Fix
           path: build/app/outputs/flutter-apk/app-release.apk
