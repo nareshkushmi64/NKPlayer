@@ -1,4 +1,4 @@
-name: NKPlayer - Final V2 Fix & Android 16 Support
+name: NKPlayer - Bug Fix & Android 16 Support
 on: [push]
 
 jobs:
@@ -35,11 +35,12 @@ jobs:
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             speech_to_text: ^6.6.2
+            rxdart: ^0.27.7
           flutter:
             uses-material-design: true
           EOF
 
-          # 3. Update Android Manifest (WITH V2 EMBEDDING TAG)
+          # 3. Update Android Manifest (With V2 Tag & Legacy Storage)
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -49,7 +50,6 @@ jobs:
               <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
-              <uses-permission android:name="android.permission.WAKE_LOCK" />
 
               <queries>
                   <intent-filter>
@@ -71,15 +71,11 @@ jobs:
                       android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
                       android:hardwareAccelerated="true"
                       android:windowSoftInputMode="adjustResize">
-                      <meta-data
-                        android:name="io.flutter.embedding.android.NormalTheme"
-                        android:resource="@style/NormalTheme" />
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
                   </activity>
-                  
                   <service android:name="com.ryanheise.audioservice.AudioService"
                       android:foregroundServiceType="mediaPlayback"
                       android:exported="true">
@@ -87,15 +83,12 @@ jobs:
                           <action android:name="android.intent.action.MEDIA_BUTTON" />
                       </intent-filter>
                   </service>
-
-                  <meta-data
-                      android:name="flutterEmbedding"
-                      android:value="2" />
+                  <meta-data android:name="flutterEmbedding" android:value="2" />
               </application>
           </manifest>
           EOF
 
-          # 4. Set Target SDK 35 (Ready for Android 16)
+          # 4. Set Target SDK 35 (Android 16 Ready)
           python3 -c "
           import os
           path = 'android/app/build.gradle'
@@ -113,7 +106,7 @@ jobs:
           class MainActivity: FlutterActivity() {}
           EOF
 
-          # 6. Complete main.dart Logic
+          # 6. Corrected main.dart (Fixed just_audio & audio_service syntax)
           cat <<'EOF' > lib/main.dart
           import 'dart:async';
           import 'dart:io';
@@ -143,7 +136,8 @@ jobs:
           class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             final _player = AudioPlayer();
             MyAudioHandler() {
-              _player.playbackStateStream.map(_transformEvent).pipe(playbackState);
+              // Fixed: playerStateStream is the correct getter
+              _player.playerStateStream.map(_transformEvent).pipe(playbackState);
               _player.currentIndexStream.listen((i) {
                 if (i != null && queue.value.isNotEmpty) mediaItem.add(queue.value[i]);
               });
@@ -151,7 +145,8 @@ jobs:
             PlaybackState _transformEvent(PlayerState event) => PlaybackState(
               controls: [MediaControl.skipToPrevious, if (_player.playing) MediaControl.pause else MediaControl.play, MediaControl.skipToNext],
               systemActions: const {MediaAction.seek},
-              androidCompactIndices: const [0, 1, 2],
+              // Fixed: androidCompactActionIndices is the correct parameter name
+              androidCompactActionIndices: const [0, 1, 2],
               processingState: const {
                 ProcessingState.idle: AudioProcessingState.idle,
                 ProcessingState.loading: AudioProcessingState.loading,
@@ -361,5 +356,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.9-Complete
+          name: NKPlayer-v1.0.9-Pro-Final
           path: build/app/outputs/flutter-apk/app-release.apk
