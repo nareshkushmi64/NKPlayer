@@ -1,4 +1,4 @@
-name: NKPlayer - Android 16 Support & V2 Fix
+name: NKPlayer - Final V2 Fix & Android 16 Support
 on: [push]
 
 jobs:
@@ -34,14 +34,12 @@ jobs:
             audio_service: ^0.18.15
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
-            google_fonts: ^6.2.0
             speech_to_text: ^6.6.2
-            rxdart: ^0.27.7
           flutter:
             uses-material-design: true
           EOF
 
-          # 3. Update Android Manifest (Permissions & V2 Config)
+          # 3. Update Android Manifest (WITH V2 EMBEDDING TAG)
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -51,6 +49,7 @@ jobs:
               <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
 
               <queries>
                   <intent-filter>
@@ -72,11 +71,15 @@ jobs:
                       android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
                       android:hardwareAccelerated="true"
                       android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                        android:name="io.flutter.embedding.android.NormalTheme"
+                        android:resource="@style/NormalTheme" />
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
                   </activity>
+                  
                   <service android:name="com.ryanheise.audioservice.AudioService"
                       android:foregroundServiceType="mediaPlayback"
                       android:exported="true">
@@ -84,6 +87,10 @@ jobs:
                           <action android:name="android.intent.action.MEDIA_BUTTON" />
                       </intent-filter>
                   </service>
+
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
               </application>
           </manifest>
           EOF
@@ -98,7 +105,7 @@ jobs:
           with open(path, 'w') as f: f.write(content)
           "
 
-          # 5. Fix MainActivity.kt for V2 Embedding
+          # 5. Fix MainActivity.kt
           mkdir -p android/app/src/main/kotlin/com/nareshkushmi/nkplayer
           cat <<EOF > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MainActivity.kt
           package com.nareshkushmi.nkplayer
@@ -106,7 +113,7 @@ jobs:
           class MainActivity: FlutterActivity() {}
           EOF
 
-          # 6. Full Logic main.dart
+          # 6. Complete main.dart Logic
           cat <<'EOF' > lib/main.dart
           import 'dart:async';
           import 'dart:io';
