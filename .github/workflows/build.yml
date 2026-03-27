@@ -1,4 +1,4 @@
-name: NKPlayer - Android 16 Compatible (v1.0.15)
+name: NKPlayer - Android 10 Playback Fix (v1.0.16)
 on: [push]
 
 jobs:
@@ -17,14 +17,14 @@ jobs:
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # App Label and Target SDK 36 (Android 16)
+          # App Label and Target SDK 36 (Android 16 Compatible)
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.15+105
+          version: 1.0.16+106
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -40,20 +40,25 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Injecting Permissions for Storage Management
+          # Injecting Permissions and Legacy Storage Fix for Android 10
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
+          
+          # Permissions
           perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
               <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n'''
-          new_content = content.replace('<application', perms + '    <application')
+          
+          # Fix for Android 10 Legacy Storage
+          content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\"')
+          
           with open(path, 'w') as f:
-              f.write(new_content)
+              f.write(content)
           "
 
           cat <<'EOF' > lib/main.dart
@@ -97,13 +102,16 @@ jobs:
             Future<void> _checkPermissions() async {
               if (Platform.isAndroid) {
                 final info = await DeviceInfoPlugin().androidInfo;
-                if (info.version.sdkInt >= 30) {
+                int sdk = info.version.sdkInt;
+                
+                if (sdk >= 30) {
                   await Permission.manageExternalStorage.request();
-                  if (info.version.sdkInt >= 33) {
+                  if (sdk >= 33) {
                     await Permission.audio.request();
                     await Permission.notification.request();
                   }
                 } else {
+                  // This covers Android 10 (SDK 29) and below
                   await Permission.storage.request();
                 }
               }
@@ -249,8 +257,12 @@ jobs:
             }
 
             void _play() async {
-              await PlayerManager.player.play(DeviceFileSource(PlayerManager.currentPlaylist[PlayerManager.currentIndex].data));
-              setState(() => _playing = true);
+              try {
+                await PlayerManager.player.play(DeviceFileSource(PlayerManager.currentPlaylist[PlayerManager.currentIndex].data));
+                setState(() => _playing = true);
+              } catch (e) {
+                debugPrint("Playback Error: $e");
+              }
             }
 
             void _next() { if (PlayerManager.currentIndex < PlayerManager.currentPlaylist.length - 1) { PlayerManager.currentIndex++; _play(); } }
@@ -313,5 +325,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.15
+          name: NKPlayer-v1.0.16
           path: build/app/outputs/flutter-apk/app-release.apk
