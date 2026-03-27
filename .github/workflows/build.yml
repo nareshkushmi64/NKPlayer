@@ -1,4 +1,4 @@
-name: NKPlayer - Version 1.0.14 Build
+name: NKPlayer - Android 16 Compatible (v1.0.15)
 on: [push]
 
 jobs:
@@ -16,16 +16,15 @@ jobs:
       - name: Generate NKPlayer Project
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
-
-          # Android 16 Support
+          
+          # App Label and Target SDK 36 (Android 16)
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
-          sed -i 's/compileSdkVersion .*/compileSdkVersion 36/' android/app/build.gradle || true
-
+          
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.14+104
+          version: 1.0.15+105
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -37,15 +36,13 @@ jobs:
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
             device_info_plus: ^10.1.0
-            just_audio: ^0.9.36
-            audio_service: ^0.18.12
-            audio_session: ^0.1.16
           flutter:
             uses-material-design: true
           EOF
 
-          # Permissions (UNCHANGED)
+          # Injecting Permissions for Storage Management
           python3 -c "
+          import os
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
@@ -54,189 +51,259 @@ jobs:
               <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
               <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n'''
-          content = content.replace('<application', perms + '    <application')
+          new_content = content.replace('<application', perms + '    <application')
           with open(path, 'w') as f:
-              f.write(content)
+              f.write(new_content)
           "
 
-          # Add Audio Service
-          sed -i '/<application/a \
-              <service android:name="com.ryanheise.audioservice.AudioService" android:exported="true" android:foregroundServiceType="mediaPlayback">\
-              <intent-filter>\
-              <action android:name="android.media.browse.MediaBrowserService"/>\
-              </intent-filter>\
-              </service>' android/app/src/main/AndroidManifest.xml
-
           cat <<'EOF' > lib/main.dart
-import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:on_audio_query/on_audio_query.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:audio_service/audio_service.dart';
-import 'package:just_audio/just_audio.dart';
+          import 'dart:io';
+          import 'package:flutter/material.dart';
+          import 'package:on_audio_query/on_audio_query.dart';
+          import 'package:audioplayers/audioplayers.dart';
+          import 'package:permission_handler/permission_handler.dart';
+          import 'package:google_fonts/google_fonts.dart';
+          import 'package:device_info_plus/device_info_plus.dart';
 
-late final AudioHandler _audioHandler;
+          class PlayerManager {
+            static final AudioPlayer player = AudioPlayer();
+            static List<SongModel> currentPlaylist = [];
+            static int currentIndex = 0;
+          }
 
-class MyAudioHandler extends BaseAudioHandler {
-  final _player = AudioPlayer();
+          void main() => runApp(MaterialApp(
+                title: 'NKPlayer',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData.dark().copyWith(
+                  primaryColor: Colors.blueAccent,
+                  scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+                ),
+                home: const PermissionHandlerScreen(),
+              ));
 
-  Future<void> playSong(String uri, String title) async {
-    mediaItem.add(MediaItem(id: uri, title: title));
-    await _player.setUrl(uri);
-    _player.play();
-  }
+          class PermissionHandlerScreen extends StatefulWidget {
+            const PermissionHandlerScreen({super.key});
+            @override
+            State<PermissionHandlerScreen> createState() => _PermissionHandlerScreenState();
+          }
 
-  @override
-  Future<void> play() => _player.play();
+          class _PermissionHandlerScreenState extends State<PermissionHandlerScreen> {
+            @override
+            void initState() {
+              super.initState();
+              _checkPermissions();
+            }
 
-  @override
-  Future<void> pause() => _player.pause();
-}
-
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  _audioHandler = await AudioService.init(
-    builder: () => MyAudioHandler(),
-    config: const AudioServiceConfig(
-      androidNotificationChannelId: 'nkplayer.channel.audio',
-      androidNotificationChannelName: 'NKPlayer Playback',
-      androidNotificationOngoing: true,
-    ),
-  );
-
-  runApp(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData.dark(),
-    home: const PermissionHandlerScreen(),
-  ));
-}
-
-class PermissionHandlerScreen extends StatefulWidget {
-  const PermissionHandlerScreen({super.key});
-  @override
-  State<PermissionHandlerScreen> createState() => _PermissionHandlerScreenState();
-}
-
-class _PermissionHandlerScreenState extends State<PermissionHandlerScreen> {
-  @override
-  void initState() {
-    super.initState();
-    _checkPermissions();
-  }
-
-  Future<void> _checkPermissions() async {
-    if (Platform.isAndroid) {
-      final info = await DeviceInfoPlugin().androidInfo;
-
-      if (info.version.sdkInt >= 30) {
-        await Permission.manageExternalStorage.request();
-
-        if (info.version.sdkInt >= 33) {
-          await Permission.audio.request();
-          await Permission.notification.request();
-        }
-      } else {
-        await Permission.storage.request();
-      }
-    }
-
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const FolderListScreen()),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: CircularProgressIndicator()));
-}
-
-class CustomFolder {
-  final String name;
-  final List<SongModel> songs;
-  CustomFolder({required this.name, required this.songs});
-}
-
-class FolderListScreen extends StatelessWidget {
-  const FolderListScreen({super.key});
-
-  Future<List<CustomFolder>> _getFolders() async {
-    List<SongModel> songs = await OnAudioQuery().querySongs();
-    Map<String, List<SongModel>> paths = {};
-    for (var s in songs) {
-      if (s.data == null) continue;
-      paths.putIfAbsent(File(s.data).parent.path, () => []).add(s);
-    }
-    return paths.entries
-        .map((e) =>
-            CustomFolder(name: e.key.split('/').last, songs: e.value))
-        .toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text("Folders", style: GoogleFonts.poppins())),
-      body: FutureBuilder<List<CustomFolder>>(
-        future: _getFolders(),
-        builder: (context, snap) {
-          if (!snap.hasData)
-            return const Center(child: CircularProgressIndicator());
-          return ListView.builder(
-            itemCount: snap.data!.length,
-            itemBuilder: (context, i) {
-              final f = snap.data![i];
-              return ListTile(
-                leading: const Icon(Icons.folder),
-                title: Text(f.name),
-                onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => SongListScreen(folder: f))),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-class SongListScreen extends StatelessWidget {
-  final CustomFolder folder;
-  const SongListScreen({super.key, required this.folder});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("Songs")),
-      body: ListView.builder(
-        itemCount: folder.songs.length,
-        itemBuilder: (context, i) {
-          final s = folder.songs[i];
-          return ListTile(
-            title: Text(s.title),
-            onTap: () async {
-              final info = await DeviceInfoPlugin().androidInfo;
-
-              if (info.version.sdkInt <= 29) {
-                await _audioHandler.playSong(s.uri ?? '', s.title);
-              } else {
-                await _audioHandler.playSong(s.uri ?? '', s.title);
+            Future<void> _checkPermissions() async {
+              if (Platform.isAndroid) {
+                final info = await DeviceInfoPlugin().androidInfo;
+                if (info.version.sdkInt >= 30) {
+                  await Permission.manageExternalStorage.request();
+                  if (info.version.sdkInt >= 33) {
+                    await Permission.audio.request();
+                    await Permission.notification.request();
+                  }
+                } else {
+                  await Permission.storage.request();
+                }
               }
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-EOF
+              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderListScreen()));
+            }
+
+            @override
+            Widget build(BuildContext context) => const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+
+          class CustomFolder {
+            final String name;
+            final List<SongModel> songs;
+            CustomFolder({required this.name, required this.songs});
+          }
+
+          class FolderListScreen extends StatelessWidget {
+            const FolderListScreen({super.key});
+
+            Future<List<CustomFolder>> _getFolders() async {
+              List<SongModel> songs = await OnAudioQuery().querySongs();
+              Map<String, List<SongModel>> paths = {};
+              for (var s in songs) {
+                if (s.data == null) continue;
+                paths.putIfAbsent(File(s.data).parent.path, () => []).add(s);
+              }
+              return paths.entries.map((e) => CustomFolder(name: e.key.split('/').last, songs: e.value)).toList();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(title: Text("Folders", style: GoogleFonts.poppins())),
+                body: FutureBuilder<List<CustomFolder>>(
+                  future: _getFolders(),
+                  builder: (context, snap) {
+                    if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+                    return ListView.builder(
+                      itemCount: snap.data!.length,
+                      itemBuilder: (context, i) {
+                        final f = snap.data![i];
+                        return ListTile(
+                          leading: const Icon(Icons.folder, color: Colors.amber),
+                          title: Text(f.name),
+                          subtitle: Text("${f.songs.length} media files"),
+                          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: f))),
+                        );
+                      },
+                    );
+                  },
+                ),
+              );
+            }
+          }
+
+          class SongListScreen extends StatefulWidget {
+            final CustomFolder folder;
+            const SongListScreen({super.key, required this.folder});
+            @override
+            State<SongListScreen> createState() => _SongListScreenState();
+          }
+
+          class _SongListScreenState extends State<SongListScreen> {
+            final Set<int> _selected = {};
+            bool _isSel = false;
+            List<SongModel> _filtered = [];
+
+            @override
+            void initState() { super.initState(); _filtered = widget.folder.songs; }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  leading: _isSel ? Semantics(
+                    label: "Close selection button",
+                    button: true,
+                    excludeSemantics: true,
+                    child: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })),
+                  ) : null,
+                  title: _isSel ? Text("${_selected.length} Selected") : TextField(
+                    onChanged: (v) => setState(() => _filtered = widget.folder.songs.where((s) => s.title.toLowerCase().contains(v.toLowerCase())).toList()),
+                    decoration: const InputDecoration(hintText: "Search...", border: InputBorder.none),
+                  ),
+                  actions: _isSel ? [
+                    Semantics(
+                      label: "Select all button",
+                      button: true,
+                      excludeSemantics: true,
+                      child: IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
+                    ),
+                    Semantics(
+                      label: "Play selected button",
+                      button: true,
+                      excludeSemantics: true,
+                      child: IconButton(icon: const Icon(Icons.play_circle), onPressed: () {
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _selected.map((i) => _filtered[i]).toList(), initialIndex: 0)));
+                      }),
+                    ),
+                  ] : null,
+                ),
+                body: ListView.builder(
+                  itemCount: _filtered.length,
+                  itemBuilder: (context, i) {
+                    final isS = _selected.contains(i);
+                    return ListTile(
+                      tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
+                      leading: Icon(isS ? Icons.check_circle : Icons.music_note, color: isS ? Colors.blueAccent : Colors.grey),
+                      title: Text(_filtered[i].title, maxLines: 1),
+                      onLongPress: () => setState(() { _selected.add(i); _isSel = true; }),
+                      onTap: () {
+                        if (_isSel) setState(() { if (isS) _selected.remove(i); else _selected.add(i); _isSel = _selected.isNotEmpty; });
+                        else Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filtered, initialIndex: i)));
+                      },
+                    );
+                  },
+                ),
+              );
+            }
+          }
+
+          class PlayerScreen extends StatefulWidget {
+            final List<SongModel> songs;
+            final int initialIndex;
+            const PlayerScreen({super.key, required this.songs, required this.initialIndex});
+            @override
+            State<PlayerScreen> createState() => _PlayerScreenState();
+          }
+
+          class _PlayerScreenState extends State<PlayerScreen> {
+            bool _playing = false;
+            Duration _p = Duration.zero, _d = Duration.zero;
+
+            @override
+            void initState() {
+              super.initState();
+              PlayerManager.currentPlaylist = widget.songs;
+              PlayerManager.currentIndex = widget.initialIndex;
+              PlayerManager.player.onPositionChanged.listen((p) => setState(() => _p = p));
+              PlayerManager.player.onDurationChanged.listen((d) => setState(() => _d = d));
+              PlayerManager.player.onPlayerComplete.listen((_) => _next());
+              _play();
+            }
+
+            void _play() async {
+              await PlayerManager.player.play(DeviceFileSource(PlayerManager.currentPlaylist[PlayerManager.currentIndex].data));
+              setState(() => _playing = true);
+            }
+
+            void _next() { if (PlayerManager.currentIndex < PlayerManager.currentPlaylist.length - 1) { PlayerManager.currentIndex++; _play(); } }
+            void _prev() { if (PlayerManager.currentIndex > 0) { PlayerManager.currentIndex--; _play(); } }
+
+            String _fmt(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
+
+            @override
+            Widget build(BuildContext context) {
+              final s = PlayerManager.currentPlaylist[PlayerManager.currentIndex];
+              return Scaffold(
+                appBar: AppBar(title: const Text("Now Playing")),
+                body: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
+                    const SizedBox(height: 30),
+                    Text(s.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Slider(value: _p.inSeconds.toDouble(), max: _d.inSeconds.toDouble() > 0 ? _d.inSeconds.toDouble() : 1.0, onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt()))),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(_fmt(_p), style: const TextStyle(color: Colors.grey)),
+                          Text(_fmt(_d), style: const TextStyle(color: Colors.grey)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        Semantics(label: "Previous button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prev)),
+                        Semantics(
+                          label: _playing ? "Pause button" : "Play button",
+                          button: true,
+                          excludeSemantics: true,
+                          child: FloatingActionButton.large(
+                            backgroundColor: Colors.blueAccent,
+                            onPressed: () { if (_playing) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _playing = !_playing); },
+                            child: Icon(_playing ? Icons.pause : Icons.play_arrow, size: 50),
+                          ),
+                        ),
+                        Semantics(label: "Next button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _next)),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+          EOF
 
       - name: Build APK
         run: |
@@ -246,5 +313,5 @@ EOF
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.14
+          name: NKPlayer-v1.0.15
           path: build/app/outputs/flutter-apk/app-release.apk
