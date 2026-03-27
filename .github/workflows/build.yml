@@ -1,4 +1,4 @@
-name: NKPlayer - Bug Fix & Android 16 Support
+name: NKPlayer - Final Resource Fix & Android 16
 on: [push]
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
             uses-material-design: true
           EOF
 
-          # 3. Update Android Manifest (With V2 Tag & Legacy Storage)
+          # 3. Corrected Android Manifest (Fixed <queries> tag)
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -52,9 +52,9 @@ jobs:
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 
               <queries>
-                  <intent-filter>
+                  <intent>
                       <action android:name="android.speech.RecognitionService" />
-                  </intent-filter>
+                  </intent>
               </queries>
 
               <application
@@ -88,7 +88,7 @@ jobs:
           </manifest>
           EOF
 
-          # 4. Set Target SDK 35 (Android 16 Ready)
+          # 4. Set Target SDK 35
           python3 -c "
           import os
           path = 'android/app/build.gradle'
@@ -106,7 +106,7 @@ jobs:
           class MainActivity: FlutterActivity() {}
           EOF
 
-          # 6. Corrected main.dart (Fixed just_audio & audio_service syntax)
+          # 6. Corrected main.dart
           cat <<'EOF' > lib/main.dart
           import 'dart:async';
           import 'dart:io';
@@ -136,7 +136,6 @@ jobs:
           class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             final _player = AudioPlayer();
             MyAudioHandler() {
-              // Fixed: playerStateStream is the correct getter
               _player.playerStateStream.map(_transformEvent).pipe(playbackState);
               _player.currentIndexStream.listen((i) {
                 if (i != null && queue.value.isNotEmpty) mediaItem.add(queue.value[i]);
@@ -145,7 +144,6 @@ jobs:
             PlaybackState _transformEvent(PlayerState event) => PlaybackState(
               controls: [MediaControl.skipToPrevious, if (_player.playing) MediaControl.pause else MediaControl.play, MediaControl.skipToNext],
               systemActions: const {MediaAction.seek},
-              // Fixed: androidCompactActionIndices is the correct parameter name
               androidCompactActionIndices: const [0, 1, 2],
               processingState: const {
                 ProcessingState.idle: AudioProcessingState.idle,
