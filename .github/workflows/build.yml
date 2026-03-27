@@ -1,4 +1,4 @@
-name: NKPlayer - Android 16 Permissions & Features Fix
+name: NKPlayer - All Files Access Permissions
 on: [push]
 
 jobs:
@@ -19,14 +19,12 @@ jobs:
           
           # App Label and Version Update
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
-          
-          # Android 16 Target SDK Update (API 35/36 Support)
           sed -i 's/targetSdkVersion .*/targetSdkVersion 35/' android/app/build.gradle || true
           
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer Pro - Android 16 Supported.
-          version: 1.0.3+17
+          description: NKPlayer Pro - Manage Storage Fix.
+          version: 1.0.4+18
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -42,13 +40,17 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Injecting Android 16 Specific Permissions
+          # Injecting ALL Requested Permissions
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
-          perms = '    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />\n    <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n'
+          perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>
+              <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>
+              <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>
+              <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
+              <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n'''
           new_content = content.replace('<application', perms + '    <application')
           with open(path, 'w') as f:
               f.write(new_content)
@@ -100,15 +102,19 @@ jobs:
               
               if (Platform.isAndroid) {
                 final androidInfo = await DeviceInfoPlugin().androidInfo;
-                // Android 13 (API 33) देखि Android 16 सम्मको नयाँ नियम
-                if (androidInfo.version.sdkInt >= 33) {
-                  // १. नोटिफिकेसन पर्मिसन माग्ने
-                  await Permission.notification.request();
-                  // २. मिडिया (अडियो) मात्र एक्सेस गर्ने पर्मिसन माग्ने
-                  final audioStatus = await Permission.audio.request();
-                  isGranted = audioStatus.isGranted;
+                
+                // Android 11 (API 30) र सोभन्दा माथि MANAGE_EXTERNAL_STORAGE माग्ने
+                if (androidInfo.version.sdkInt >= 30) {
+                  final manageStatus = await Permission.manageExternalStorage.request();
+                  isGranted = manageStatus.isGranted;
+                  
+                  // Android 13+ को लागि अडियो र नोटिफिकेसन पनि माग्ने
+                  if (androidInfo.version.sdkInt >= 33) {
+                    await Permission.audio.request();
+                    await Permission.notification.request();
+                  }
                 } else {
-                  // पुराना एन्ड्रोइड भर्सनका लागि
+                  // Android 10 र तलको लागि
                   final storageStatus = await Permission.storage.request();
                   isGranted = storageStatus.isGranted;
                 }
@@ -129,19 +135,18 @@ jobs:
                       ? Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.security_rounded, size: 80, color: Colors.blueAccent),
+                            const Icon(Icons.folder_special_rounded, size: 80, color: Colors.blueAccent),
                             const SizedBox(height: 20),
-                            Text("गीत बजाउन पर्मिसन आवश्यक छ", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                            Text("All Files Access आवश्यक छ", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                             const SizedBox(height: 10),
                             const Padding(
                               padding: EdgeInsets.symmetric(horizontal: 40),
-                              child: Text("कृपया सेटिङ्समा गएर 'Music and Audio' र 'Notifications' लाई Allow गर्नुहोस्।", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
+                              child: Text("गीतहरू प्ले गर्न र हटाउन (Delete) को लागि कृपया सेटिङ्समा गएर 'Allow access to manage all files' अन गर्नुहोस्।", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
                             ),
                             const SizedBox(height: 30),
                             ElevatedButton.icon(
                               onPressed: () async {
                                 await openAppSettings();
-                                // सेटिङ्सबाट फर्केपछि फेरि चेक गर्न
                                 setState(() => _needsPermission = false);
                                 _checkPermissions();
                               },
@@ -280,10 +285,10 @@ jobs:
                     TextButton(
                       onPressed: () {
                         for (var index in _selectedIndices) {
-                          try { File(_filteredSongs[index].data).deleteSync(); } catch (_) {}
+                          try { File(_filteredSongs[index].data).deleteSync(); } catch (e) { debugPrint("Delete Error: \$e"); }
                         }
                         Navigator.pop(context);
-                        Navigator.pop(context);
+                        Navigator.pop(context); // फोल्डर लिस्टमा फर्किन
                       },
                       child: const Text("Delete", style: TextStyle(color: Colors.redAccent)),
                     ),
@@ -418,22 +423,13 @@ jobs:
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
-                            Semantics(
-                              label: "Previous button", button: true, excludeSemantics: true,
-                              child: IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 45), color: Colors.white, onPressed: _prev),
+                            IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 45), color: Colors.white, onPressed: _prev),
+                            FloatingActionButton.large(
+                              backgroundColor: Colors.blueAccent,
+                              onPressed: () { if (_isPlaying) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _isPlaying = !_isPlaying); },
+                              child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 50, color: Colors.white),
                             ),
-                            Semantics(
-                              label: _isPlaying ? "Pause button" : "Play button", button: true, excludeSemantics: true,
-                              child: FloatingActionButton.large(
-                                backgroundColor: Colors.blueAccent,
-                                onPressed: () { if (_isPlaying) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _isPlaying = !_isPlaying); },
-                                child: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 50, color: Colors.white),
-                              ),
-                            ),
-                            Semantics(
-                              label: "Next button", button: true, excludeSemantics: true,
-                              child: IconButton(icon: const Icon(Icons.skip_next_rounded, size: 45), color: Colors.white, onPressed: _next),
-                            ),
+                            IconButton(icon: const Icon(Icons.skip_next_rounded, size: 45), color: Colors.white, onPressed: _next),
                           ],
                         ),
                       ],
@@ -453,5 +449,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.3-Android16-Final
+          name: NKPlayer-ManageStorage-Enabled
           path: build/app/outputs/flutter-apk/app-release.apk
