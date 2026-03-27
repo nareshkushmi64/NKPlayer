@@ -1,4 +1,4 @@
-name: NKPlayer - Android 16 Permission Fix
+name: NKPlayer - Android 16 Permission Loop Fix
 on: [push]
 
 jobs:
@@ -19,11 +19,11 @@ jobs:
           rm -rf android/
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # 2. Update pubspec.yaml (Version 1.0.9+27)
+          # 2. Update pubspec.yaml
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Ultimate Permission Fix.
-          version: 1.0.9+27
+          version: 1.0.9+28
           publish_to: 'none'
           environment:
             sdk: '>=3.3.0 <4.0.0'
@@ -33,14 +33,12 @@ jobs:
             just_audio: ^0.9.46
             audio_service: ^0.18.15
             on_audio_query: ^2.9.0
-            permission_handler: ^11.3.0
             path: ^1.9.0
-            device_info_plus: ^10.1.0
           flutter:
             uses-material-design: true
           EOF
 
-          # 3. Comprehensive Android Manifest (Added All Permissions)
+          # 3. Android Manifest with Legacy and New Permissions
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.nareshkushmi.nkplayer">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -48,7 +46,6 @@ jobs:
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
               <application
                   android:label="NKPlayer"
@@ -87,33 +84,28 @@ jobs:
           class MainActivity: FlutterActivity() {}
           EOF
 
-          # 5. Fixed main.dart (Forceful Permission Request)
+          # 5. Fixed main.dart (Better Permission Handling)
           cat <<'EOF' > lib/main.dart
           import 'dart:async';
-          import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:just_audio/just_audio.dart';
           import 'package:audio_service/audio_service.dart';
           import 'package:on_audio_query/on_audio_query.dart';
           import 'package:path/path.dart' as p;
-          import 'package:permission_handler/permission_handler.dart';
-          import 'package:device_info_plus/device_info_plus.dart';
 
           AudioHandler? _handler;
-          final _query = OnAudioQuery();
+          final OnAudioQuery _audioQuery = OnAudioQuery();
 
-          void main() {
-            runZonedGuarded(() async {
-              WidgetsFlutterBinding.ensureInitialized();
-              runApp(const MaterialApp(home: PermissionScreen(), debugShowCheckedModeBanner: false));
-              _handler = await AudioService.init(
-                builder: () => MyAudioHandler(),
-                config: const AudioServiceConfig(
-                  androidNotificationChannelId: 'com.nareshkushmi.nkplayer.audio',
-                  androidNotificationChannelName: 'NKPlayer Music',
-                ),
-              );
-            }, (e, s) => debugPrint(e.toString()));
+          void main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            runApp(const MaterialApp(home: PermissionGate(), debugShowCheckedModeBanner: false));
+            _handler = await AudioService.init(
+              builder: () => MyAudioHandler(),
+              config: const AudioServiceConfig(
+                androidNotificationChannelId: 'com.nareshkushmi.nkplayer.audio',
+                androidNotificationChannelName: 'NKPlayer Music',
+              ),
+            );
           }
 
           class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
@@ -153,51 +145,57 @@ jobs:
             }
           }
 
-          class PermissionScreen extends StatefulWidget {
-            const PermissionScreen({super.key});
-            @override State<PermissionScreen> createState() => _PermissionScreenState();
+          class PermissionGate extends StatefulWidget {
+            const PermissionGate({super.key});
+            @override State<PermissionGate> createState() => _PermissionGateState();
           }
 
-          class _PermissionScreenState extends State<PermissionScreen> {
-            @override void initState() { super.initState(); _ask(); }
+          class _PermissionGateState extends State<PermissionGate> {
+            bool _isLoading = true;
 
-            _ask() async {
-              // Wait for handler
-              while (_handler == null) await Future.delayed(const Duration(milliseconds: 200));
+            @override
+            void initState() {
+              super.initState();
+              _requestPermission();
+            }
 
-              if (Platform.isAndroid) {
-                final deviceInfo = await DeviceInfoPlugin().androidInfo;
-                if (deviceInfo.version.sdkInt >= 33) {
-                  // Android 13, 14, 15, 16
-                  await [Permission.audio, Permission.notification].request();
-                } else {
-                  // Older Androids
-                  await Permission.storage.request();
-                }
+            _requestPermission() async {
+              setState(() => _isLoading = true);
+              bool status = await _audioQuery.permissionsStatus();
+              if (!status) {
+                status = await _audioQuery.checkAndRequest();
               }
-
-              // Double check with on_audio_query
-              bool status = await _query.permissionsStatus();
-              if (!status) await _query.checkAndRequest();
-
-              if (mounted) {
+              
+              if (status && mounted) {
                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderList()));
+              } else {
+                setState(() => _isLoading = false);
               }
             }
 
             @override
-            Widget build(BuildContext context) => const Scaffold(
-              body: Center(child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.security, size: 80, color: Colors.blue),
-                  SizedBox(height: 20),
-                  Text("Granting Permissions..."),
-                  SizedBox(height: 10),
-                  CircularProgressIndicator(),
-                ],
-              )),
-            );
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: Center(
+                  child: _isLoading 
+                    ? const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [CircularProgressIndicator(), SizedBox(height: 20), Text("पर्मिसन जाँच गर्दै...")],
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.security, size: 80, color: Colors.redAccent),
+                          const Padding(
+                            padding: EdgeInsets.all(20),
+                            child: Text("गीतहरू देखाउनका लागि स्टोरेज पर्मिसन चाहिन्छ। कृपया 'Allow' मा क्लिक गर्नुहोस् वा Settings मा गएर पर्मिसन दिनुहोस्।", textAlign: TextAlign.center),
+                          ),
+                          ElevatedButton(onPressed: _requestPermission, child: const Text("पर्मिसन दिनुहोस्")),
+                        ],
+                      ),
+                ),
+              );
+            }
           }
 
           class FolderList extends StatelessWidget {
@@ -206,10 +204,10 @@ jobs:
               return Scaffold(
                 appBar: AppBar(title: const Text("NKPlayer Folders"), backgroundColor: Colors.blue, foregroundColor: Colors.white),
                 body: FutureBuilder<List<SongModel>>(
-                  future: _query.querySongs(),
+                  future: _audioQuery.querySongs(),
                   builder: (context, snap) {
                     if (snap.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                    if (!snap.hasData || snap.data!.isEmpty) return const Center(child: Text("No Music Found. Please add music to your phone."));
+                    if (!snap.hasData || snap.data!.isEmpty) return const Center(child: Text("कुनै गीत भेटिएन।"));
 
                     Map<String, List<SongModel>> folders = {};
                     for (var song in snap.data!) {
@@ -264,12 +262,12 @@ jobs:
                   stream: _handler?.mediaItem,
                   builder: (context, snap) {
                     final item = snap.data;
-                    if (item == null) return const Center(child: Text("Loading..."));
+                    if (item == null) return const Center(child: Text("लोड हुँदैछ..."));
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.music_note, size: 100, color: Colors.blue),
+                          const Icon(Icons.music_note, size: 120, color: Colors.blue),
                           Padding(padding: const EdgeInsets.all(20), child: Text(item.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
                           StreamBuilder<PlaybackState>(
                             stream: _handler?.playbackState,
@@ -303,5 +301,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.9-Android16-PermFix
+          name: NKPlayer-v1.0.9-Android16-FinalFix
           path: build/app/outputs/flutter-apk/app-release.apk
