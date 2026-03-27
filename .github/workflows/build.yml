@@ -1,4 +1,4 @@
-name: NKPlayer - Android 16 Support Build
+name: NKPlayer - Bug Fix & Android 16 Stable
 on: [push]
 
 jobs:
@@ -15,15 +15,15 @@ jobs:
 
       - name: Generate and Fix Project Structure
         run: |
-          # 1. Fresh Setup for Android 16 Compatibility
+          # 1. Fresh Setup
           rm -rf android/
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # 2. Update pubspec.yaml (Version 1.0.9+24)
+          # 2. Update pubspec.yaml (Version 1.0.9+25)
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer Pro - Android 16 Ready.
-          version: 1.0.9+24
+          description: NKPlayer Pro - Ultimate Stability.
+          version: 1.0.9+25
           publish_to: 'none'
           environment:
             sdk: '>=3.3.0 <4.0.0'
@@ -35,12 +35,11 @@ jobs:
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             path: ^1.9.0
-            device_info_plus: ^10.1.0
           flutter:
             uses-material-design: true
           EOF
 
-          # 3. Android 16 Compatible Manifest
+          # 3. Stable Android Manifest
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.nareshkushmi.nkplayer">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -54,8 +53,7 @@ jobs:
                   android:label="NKPlayer"
                   android:name="\${applicationName}"
                   android:icon="@mipmap/ic_launcher"
-                  android:requestLegacyExternalStorage="true"
-                  android:enableOnBackInvokedCallback="true">
+                  android:requestLegacyExternalStorage="true">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -80,7 +78,7 @@ jobs:
           </manifest>
           EOF
 
-          # 4. Kotlin Fix for Android 16
+          # 4. Correct MainActivity.kt
           mkdir -p android/app/src/main/kotlin/com/nareshkushmi/nkplayer
           cat <<EOF > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MainActivity.kt
           package com.nareshkushmi.nkplayer
@@ -88,11 +86,7 @@ jobs:
           class MainActivity: FlutterActivity() {}
           EOF
 
-          # 5. Build.gradle Fix for Target SDK 35 (Android 15/16 Ready)
-          sed -i 's/targetSdkVersion .*/targetSdkVersion 35/' android/app/build.gradle
-          sed -i 's/compileSdkVersion .*/compileSdkVersion 35/' android/app/build.gradle
-
-          # 6. Main.dart with Android 16 Logic
+          # 5. Fixed main.dart (Corrected seekToNext/Previous)
           cat <<'EOF' > lib/main.dart
           import 'dart:async';
           import 'package:flutter/material.dart';
@@ -120,10 +114,13 @@ jobs:
 
           class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             final _player = AudioPlayer();
+            
             MyAudioHandler() {
               _player.playerStateStream.map(_transformEvent).pipe(playbackState);
               _player.currentIndexStream.listen((index) {
-                if (index != null && queue.value.isNotEmpty) mediaItem.add(queue.value[index]);
+                if (index != null && queue.value.isNotEmpty) {
+                  mediaItem.add(queue.value[index]);
+                }
               });
             }
 
@@ -144,20 +141,30 @@ jobs:
               }[event.processingState]!,
               playing: event.playing,
               updatePosition: _player.position,
+              bufferedPosition: _player.bufferedPosition,
             );
 
             @override Future<void> play() => _player.play();
             @override Future<void> pause() => _player.pause();
-            @override Future<void> skipToNext() => _player.skipToNext();
-            @override Future<void> skipToPrevious() => _player.skipToPrevious();
+            
+            // FIX: Changed skipToNext to seekToNext
+            @override Future<void> skipToNext() => _player.seekToNext();
+            @override Future<void> skipToPrevious() => _player.seekToPrevious();
             @override Future<void> seek(Duration pos) => _player.seek(pos);
 
             Future<void> loadPlaylist(List<MediaItem> items, int index) async {
-              final sources = items.map((item) => AudioSource.file(item.extras!['path'])).toList();
-              queue.add(items);
-              mediaItem.add(items[index]);
-              await _player.setAudioSource(ConcatenatingAudioSource(children: sources), initialIndex: index);
-              _player.play();
+              try {
+                final sources = items.map((item) => AudioSource.file(item.extras!['path'])).toList();
+                queue.add(items);
+                mediaItem.add(items[index]);
+                await _player.setAudioSource(
+                  ConcatenatingAudioSource(children: sources),
+                  initialIndex: index,
+                );
+                _player.play();
+              } catch (e) {
+                debugPrint("Playback Error: $e");
+              }
             }
           }
 
@@ -172,7 +179,7 @@ jobs:
               await [Permission.audio, Permission.notification].request();
               bool status = await _query.permissionsStatus();
               if (!status) status = await _query.checkAndRequest();
-              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderList()));
+              if (status && mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderList()));
             }
             @override Widget build(BuildContext context) => const Scaffold(body: Center(child: CircularProgressIndicator()));
           }
@@ -181,7 +188,7 @@ jobs:
             const FolderList({super.key});
             @override Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: const Text("NKPlayer - Android 16")),
+                appBar: AppBar(title: const Text("NKPlayer Folders")),
                 body: FutureBuilder<List<SongModel>>(
                   future: _query.querySongs(),
                   builder: (context, snap) {
@@ -194,7 +201,7 @@ jobs:
                     return ListView.builder(
                       itemCount: paths.length,
                       itemBuilder: (context, i) => ListTile(
-                        leading: const Icon(Icons.folder, color: Colors.blue),
+                        leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
                         title: Text(p.basename(paths[i])),
                         subtitle: Text("${folders[paths[i]]!.length} Songs"),
                         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongList(folderName: p.basename(paths[i]), songs: folders[paths[i]]!))),
@@ -243,7 +250,7 @@ jobs:
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.music_note, size: 100, color: Colors.blue),
+                          const Icon(Icons.music_note, size: 120, color: Colors.blue),
                           Padding(padding: const EdgeInsets.all(20), child: Text(item.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
                           StreamBuilder<PlaybackState>(
                             stream: _handler.playbackState,
@@ -252,9 +259,9 @@ jobs:
                               return Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  IconButton(icon: const Icon(Icons.skip_previous, size: 40), onPressed: _handler.skipToPrevious),
-                                  IconButton(icon: Icon(playing ? Icons.pause_circle : Icons.play_circle, size: 60), onPressed: playing ? _handler.pause : _handler.play),
-                                  IconButton(icon: const Icon(Icons.skip_next, size: 40), onPressed: _handler.skipToNext),
+                                  IconButton(icon: const Icon(Icons.skip_previous, size: 50), onPressed: _handler.skipToPrevious),
+                                  IconButton(icon: Icon(playing ? Icons.pause_circle : Icons.play_circle, size: 70, color: Colors.blue), onPressed: playing ? _handler.pause : _handler.play),
+                                  IconButton(icon: const Icon(Icons.skip_next, size: 50), onPressed: _handler.skipToNext),
                                 ],
                               );
                             },
@@ -277,5 +284,5 @@ jobs:
       - name: Upload NKPlayer APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.9-Android16-Ready
+          name: NKPlayer-v1.0.9-Android16-Stable
           path: build/app/outputs/flutter-apk/app-release.apk
