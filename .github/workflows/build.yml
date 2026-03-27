@@ -1,4 +1,4 @@
-name: NKPlayer - Version 1.0.12 Build
+name: NKPlayer - Version 1.0.14 Build
 on: [push]
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.12+102
+          version: 1.0.14+104
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -178,7 +178,12 @@ jobs:
             Widget build(BuildContext context) {
               return Scaffold(
                 appBar: AppBar(
-                  leading: _isSel ? IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })) : null,
+                  leading: _isSel ? Semantics(
+                    label: "Close selection button",
+                    button: true,
+                    excludeSemantics: true,
+                    child: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })),
+                  ) : null,
                   title: _isSel ? Text("${_selected.length} Selected") : TextField(
                     onChanged: (v) => setState(() => _filtered = widget.folder.songs.where((s) => s.title.toLowerCase().contains(v.toLowerCase())).toList()),
                     decoration: const InputDecoration(hintText: "Search...", border: InputBorder.none),
@@ -187,11 +192,13 @@ jobs:
                     Semantics(
                       label: "Select all button",
                       button: true,
+                      excludeSemantics: true,
                       child: IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
                     ),
                     Semantics(
                       label: "Play selected button",
                       button: true,
+                      excludeSemantics: true,
                       child: IconButton(icon: const Icon(Icons.play_circle), onPressed: () {
                         Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _selected.map((i) => _filtered[i]).toList(), initialIndex: 0)));
                       }),
@@ -306,5 +313,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.12
+          name: NKPlayer-v1.0.14
           path: build/app/outputs/flutter-apk/app-release.apk
