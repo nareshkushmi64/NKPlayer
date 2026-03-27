@@ -1,4 +1,4 @@
-name: NKPlayer - Version 1.0.10 Build
+name: NKPlayer - Version 1.0.11 Build
 on: [push]
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.10+100
+          version: 1.0.11+101
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -148,7 +148,7 @@ jobs:
                         return ListTile(
                           leading: const Icon(Icons.folder, color: Colors.amber),
                           title: Text(f.name),
-                          subtitle: Text("${f.songs.length} tracks"),
+                          subtitle: Text("${f.songs.length} media files"),
                           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: f))),
                         );
                       },
@@ -187,10 +187,6 @@ jobs:
                     IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
                     IconButton(icon: const Icon(Icons.play_circle), onPressed: () {
                       Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _selected.map((i) => _filtered[i]).toList(), initialIndex: 0)));
-                    }),
-                    IconButton(icon: const Icon(Icons.delete), onPressed: () {
-                      for (var i in _selected) { try { File(_filtered[i].data).deleteSync(); } catch (_) {} }
-                      Navigator.pop(context);
                     }),
                   ] : null,
                 ),
@@ -273,17 +269,18 @@ jobs:
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        Semantics(label: "Previous", button: true, child: IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prev)),
+                        Semantics(label: "Previous", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prev)),
                         Semantics(
                           label: _playing ? "Pause" : "Play",
                           button: true,
+                          excludeSemantics: true,
                           child: FloatingActionButton.large(
                             backgroundColor: Colors.blueAccent,
                             onPressed: () { if (_playing) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _playing = !_playing); },
                             child: Icon(_playing ? Icons.pause : Icons.play_arrow, size: 50),
                           ),
                         ),
-                        Semantics(label: "Next", button: true, child: IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _next)),
+                        Semantics(label: "Next", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _next)),
                       ],
                     ),
                   ],
@@ -301,5 +298,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.10
+          name: NKPlayer-v1.0.11
           path: build/app/outputs/flutter-apk/app-release.apk
