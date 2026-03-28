@@ -178,7 +178,7 @@ jobs:
                           start()
                           setOnCompletionListener {
                               if (currentIndex < paths.size - 1) { currentIndex++; playTrack() }
-                              else { playing = false; notify() }
+                              else { playing = false; updateNotif() }
                           }
                       }
                       playing = true
