@@ -36,7 +36,7 @@ jobs:
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
             device_info_plus: ^10.1.0
-            flutter_foreground_task: ^8.0.0
+            flutter_foreground_task: 8.17.0
           flutter:
             uses-material-design: true
           PUBSPEC
@@ -73,7 +73,26 @@ jobs:
           import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
           // ─────────────────────────────────────────────────────────────────────
-          //  Global Player Manager (singleton)
+          //  Foreground Task Handler  (v8.x API - no SendPort params)
+          // ─────────────────────────────────────────────────────────────────────
+          @pragma('vm:entry-point')
+          void startCallback() {
+            FlutterForegroundTask.setTaskHandler(NKTaskHandler());
+          }
+
+          class NKTaskHandler extends TaskHandler {
+            @override
+            Future<void> onStart(DateTime timestamp) async {}
+
+            @override
+            void onRepeatEvent(DateTime timestamp) {}
+
+            @override
+            Future<void> onDestroy(DateTime timestamp) async {}
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          //  Global Player Manager
           // ─────────────────────────────────────────────────────────────────────
           class PlayerManager {
             static final AudioPlayer player = AudioPlayer();
@@ -88,16 +107,10 @@ jobs:
                   channelDescription: 'NKPlayer is running in the background',
                   channelImportance: NotificationChannelImportance.LOW,
                   priority: NotificationPriority.LOW,
-                  iconData: const NotificationIconData(
-                    resType: ResourceType.mipmap,
-                    resPrefix: ResourcePrefix.ic,
-                    name: 'launcher',
-                  ),
                 ),
                 iosNotificationOptions: const IOSNotificationOptions(),
-                foregroundTaskOptions: const ForegroundTaskOptions(
-                  interval: 5000,
-                  isOnceEvent: false,
+                foregroundTaskOptions: ForegroundTaskOptions(
+                  eventAction: ForegroundTaskEventAction.repeat(5000),
                   autoRunOnBoot: false,
                   allowWakeLock: true,
                   allowWifiLock: true,
@@ -107,12 +120,13 @@ jobs:
 
             static Future<void> startForeground(String songTitle) async {
               if (await FlutterForegroundTask.isRunningService) {
-                await FlutterForegroundTask.updateService(
+                FlutterForegroundTask.updateService(
                   notificationTitle: 'NKPlayer',
                   notificationText: songTitle,
                 );
               } else {
                 await FlutterForegroundTask.startService(
+                  serviceId: 256,
                   notificationTitle: 'NKPlayer',
                   notificationText: songTitle,
                   callback: startCallback,
@@ -123,20 +137,6 @@ jobs:
             static Future<void> stopForeground() async {
               await FlutterForegroundTask.stopService();
             }
-          }
-
-          @pragma('vm:entry-point')
-          void startCallback() {
-            FlutterForegroundTask.setTaskHandler(NKTaskHandler());
-          }
-
-          class NKTaskHandler extends TaskHandler {
-            @override
-            Future<void> onStart(DateTime timestamp, SendPort? sendPort) async {}
-            @override
-            Future<void> onRepeatEvent(DateTime timestamp, SendPort? sendPort) async {}
-            @override
-            Future<void> onDestroy(DateTime timestamp, SendPort? sendPort) async {}
           }
 
           // ─────────────────────────────────────────────────────────────────────
@@ -170,10 +170,12 @@ jobs:
           class PermissionHandlerScreen extends StatefulWidget {
             const PermissionHandlerScreen({super.key});
             @override
-            State<PermissionHandlerScreen> createState() => _PermissionHandlerScreenState();
+            State<PermissionHandlerScreen> createState() =>
+                _PermissionHandlerScreenState();
           }
 
-          class _PermissionHandlerScreenState extends State<PermissionHandlerScreen> {
+          class _PermissionHandlerScreenState
+              extends State<PermissionHandlerScreen> {
             @override
             void initState() {
               super.initState();
@@ -208,7 +210,7 @@ jobs:
           }
 
           // ─────────────────────────────────────────────────────────────────────
-          //  Folder & Song Screens
+          //  Data Model
           // ─────────────────────────────────────────────────────────────────────
           class CustomFolder {
             final String name;
@@ -216,6 +218,9 @@ jobs:
             CustomFolder({required this.name, required this.songs});
           }
 
+          // ─────────────────────────────────────────────────────────────────────
+          //  Folder List Screen
+          // ─────────────────────────────────────────────────────────────────────
           class FolderListScreen extends StatefulWidget {
             const FolderListScreen({super.key});
             @override
@@ -237,7 +242,9 @@ jobs:
               _searchCtrl.addListener(() {
                 setState(() {
                   _filteredSongs = _allSongs
-                      .where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase()))
+                      .where((s) => s.title
+                          .toLowerCase()
+                          .contains(_searchCtrl.text.toLowerCase()))
                       .toList();
                 });
               });
@@ -248,12 +255,15 @@ jobs:
               final Map<String, List<SongModel>> paths = {};
               for (var s in songs) {
                 if (s.data.isEmpty) continue;
-                paths.putIfAbsent(File(s.data).parent.path, () => []).add(s);
+                paths
+                    .putIfAbsent(File(s.data).parent.path, () => [])
+                    .add(s);
               }
               setState(() {
                 _allSongs = songs;
                 _folders = paths.entries
-                    .map((e) => CustomFolder(name: e.key.split('/').last, songs: e.value))
+                    .map((e) => CustomFolder(
+                        name: e.key.split('/').last, songs: e.value))
                     .toList();
                 _loading = false;
               });
@@ -285,11 +295,14 @@ jobs:
                       : Text('Folders', style: GoogleFonts.poppins()),
                   actions: [
                     Semantics(
-                      label: _isSearching ? 'close search button' : 'search button',
+                      label: _isSearching
+                          ? 'close search button'
+                          : 'search button',
                       button: true,
                       excludeSemantics: true,
                       child: IconButton(
-                        icon: Icon(_isSearching ? Icons.close : Icons.search),
+                        icon:
+                            Icon(_isSearching ? Icons.close : Icons.search),
                         onPressed: () => setState(() {
                           _isSearching = !_isSearching;
                           if (!_isSearching) _searchCtrl.clear();
@@ -304,13 +317,16 @@ jobs:
                         ? ListView.builder(
                             itemCount: _filteredSongs.length,
                             itemBuilder: (_, i) => ListTile(
-                              leading: const Icon(Icons.music_note, color: Colors.blueAccent),
-                              title: Text(_filteredSongs[i].title, maxLines: 1),
+                              leading: const Icon(Icons.music_note,
+                                  color: Colors.blueAccent),
+                              title: Text(_filteredSongs[i].title,
+                                  maxLines: 1),
                               onTap: () => Navigator.push(
                                   context,
                                   MaterialPageRoute(
                                       builder: (_) => PlayerScreen(
-                                          songs: _filteredSongs, initialIndex: i))),
+                                          songs: _filteredSongs,
+                                          initialIndex: i))),
                             ),
                           )
                         : ListView.builder(
@@ -318,13 +334,16 @@ jobs:
                             itemBuilder: (_, i) {
                               final f = _folders[i];
                               return ListTile(
-                                leading: const Icon(Icons.folder, color: Colors.amber),
+                                leading: const Icon(Icons.folder,
+                                    color: Colors.amber),
                                 title: Text(f.name),
-                                subtitle: Text('${f.songs.length} media files'),
+                                subtitle:
+                                    Text('${f.songs.length} media files'),
                                 onTap: () => Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                        builder: (_) => SongListScreen(folder: f))),
+                                        builder: (_) =>
+                                            SongListScreen(folder: f))),
                               );
                             },
                           ),
@@ -332,6 +351,9 @@ jobs:
             }
           }
 
+          // ─────────────────────────────────────────────────────────────────────
+          //  Song List Screen
+          // ─────────────────────────────────────────────────────────────────────
           class SongListScreen extends StatefulWidget {
             final CustomFolder folder;
             const SongListScreen({super.key, required this.folder});
@@ -371,8 +393,8 @@ jobs:
                           excludeSemantics: true,
                           child: IconButton(
                               icon: const Icon(Icons.close),
-                              onPressed: () =>
-                                  setState(() { _selected.clear(); _isSel = false; })),
+                              onPressed: () => setState(
+                                  () { _selected.clear(); _isSel = false; })),
                         )
                       : null,
                   title: _isSel
@@ -389,7 +411,8 @@ jobs:
                                     excludeSemantics: true,
                                     child: IconButton(
                                         icon: const Icon(Icons.clear),
-                                        onPressed: () => _searchCtrl.clear()),
+                                        onPressed: () =>
+                                            _searchCtrl.clear()),
                                   )
                                 : null,
                           ),
@@ -403,7 +426,8 @@ jobs:
                             child: IconButton(
                                 icon: const Icon(Icons.select_all),
                                 onPressed: () => setState(() =>
-                                    _selected.addAll(Iterable.generate(_filtered.length)))),
+                                    _selected.addAll(
+                                        Iterable.generate(_filtered.length)))),
                           ),
                           Semantics(
                             label: 'play selected button',
@@ -429,9 +453,12 @@ jobs:
                   itemBuilder: (_, i) {
                     final isS = _selected.contains(i);
                     return ListTile(
-                      tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
-                      leading: Icon(isS ? Icons.check_circle : Icons.music_note,
-                          color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                      tileColor:
+                          isS ? Colors.blueAccent.withOpacity(0.1) : null,
+                      leading: Icon(
+                          isS ? Icons.check_circle : Icons.music_note,
+                          color:
+                              i % 2 == 0 ? Colors.blueAccent : Colors.grey),
                       title: Text(_filtered[i].title, maxLines: 1),
                       onLongPress: () =>
                           setState(() { _selected.add(i); _isSel = true; }),
@@ -448,8 +475,8 @@ jobs:
                           Navigator.push(
                               context,
                               MaterialPageRoute(
-                                  builder: (_) =>
-                                      PlayerScreen(songs: _filtered, initialIndex: i)));
+                                  builder: (_) => PlayerScreen(
+                                      songs: _filtered, initialIndex: i)));
                         }
                       },
                     );
@@ -486,17 +513,19 @@ jobs:
                   .listen((p) { if (mounted) setState(() => _pos = p); });
               PlayerManager.player.onDurationChanged
                   .listen((d) { if (mounted) setState(() => _dur = d); });
-              PlayerManager.player.onPlayerComplete.listen((_) => _next());
+              PlayerManager.player.onPlayerComplete
+                  .listen((_) => _next());
 
               _playCurrent();
             }
 
             Future<void> _playCurrent() async {
-              final song = PlayerManager.playlist[PlayerManager.currentIndex];
+              final song =
+                  PlayerManager.playlist[PlayerManager.currentIndex];
               try {
-                await PlayerManager.player.play(DeviceFileSource(song.data));
+                await PlayerManager.player
+                    .play(DeviceFileSource(song.data));
                 setState(() => _playing = true);
-                // Start foreground service so music keeps playing when app is closed
                 await PlayerManager.startForeground(song.title);
               } catch (e) {
                 debugPrint('Playback error: $e');
@@ -504,7 +533,8 @@ jobs:
             }
 
             void _next() {
-              if (PlayerManager.currentIndex < PlayerManager.playlist.length - 1) {
+              if (PlayerManager.currentIndex <
+                  PlayerManager.playlist.length - 1) {
                 PlayerManager.currentIndex++;
                 _playCurrent();
               } else {
@@ -534,17 +564,20 @@ jobs:
 
             @override
             Widget build(BuildContext context) {
-              final song = PlayerManager.playlist[PlayerManager.currentIndex];
+              final song =
+                  PlayerManager.playlist[PlayerManager.currentIndex];
               return WithForegroundTask(
                 child: Scaffold(
                   appBar: AppBar(title: const Text('Now Playing')),
                   body: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
+                      const Icon(Icons.music_note,
+                          size: 100, color: Colors.blueAccent),
                       const SizedBox(height: 30),
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 16),
                         child: Text(
                           song.title,
                           textAlign: TextAlign.center,
@@ -555,27 +588,32 @@ jobs:
                       ),
                       const SizedBox(height: 8),
                       Text(song.artist ?? 'Unknown Artist',
-                          style:
-                              const TextStyle(color: Colors.grey, fontSize: 14)),
+                          style: const TextStyle(
+                              color: Colors.grey, fontSize: 14)),
                       Slider(
-                        value: _pos.inSeconds
-                            .toDouble()
-                            .clamp(0, _dur.inSeconds.toDouble() > 0 ? _dur.inSeconds.toDouble() : 1),
+                        value: _pos.inSeconds.toDouble().clamp(
+                            0,
+                            _dur.inSeconds.toDouble() > 0
+                                ? _dur.inSeconds.toDouble()
+                                : 1),
                         max: _dur.inSeconds.toDouble() > 0
                             ? _dur.inSeconds.toDouble()
                             : 1.0,
-                        onChanged: (v) =>
-                            PlayerManager.player.seek(Duration(seconds: v.toInt())),
+                        onChanged: (v) => PlayerManager.player
+                            .seek(Duration(seconds: v.toInt())),
                       ),
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 20),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(_fmt(_pos),
-                                style: const TextStyle(color: Colors.grey)),
+                                style:
+                                    const TextStyle(color: Colors.grey)),
                             Text(_fmt(_dur),
-                                style: const TextStyle(color: Colors.grey)),
+                                style:
+                                    const TextStyle(color: Colors.grey)),
                           ],
                         ),
                       ),
@@ -588,7 +626,8 @@ jobs:
                             button: true,
                             excludeSemantics: true,
                             child: IconButton(
-                                icon: const Icon(Icons.skip_previous, size: 45),
+                                icon: const Icon(Icons.skip_previous,
+                                    size: 45),
                                 onPressed: _prev),
                           ),
                           Semantics(
@@ -599,7 +638,9 @@ jobs:
                               backgroundColor: Colors.blueAccent,
                               onPressed: _togglePlay,
                               child: Icon(
-                                  _playing ? Icons.pause : Icons.play_arrow,
+                                  _playing
+                                      ? Icons.pause
+                                      : Icons.play_arrow,
                                   size: 50),
                             ),
                           ),
