@@ -1,4 +1,4 @@
-name: NKPlayer - Accessibility Fixes (v1.0.18)
+name: NKPlayer - Clean Accessibility Labels (v1.0.19)
 on: [push]
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.18+108
+          version: 1.0.19+109
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -175,7 +175,7 @@ jobs:
                                 ? Semantics(
                                     label: "Clear search button",
                                     button: true,
-                                    container: true,
+                                    excludeSemantics: true,
                                     child: IconButton(icon: const Icon(Icons.clear), onPressed: () => _searchCtrl.clear()),
                                   )
                                 : null,
@@ -186,6 +186,7 @@ jobs:
                     Semantics(
                       label: _isSearching ? "Close search button" : "Search button",
                       button: true,
+                      excludeSemantics: true,
                       child: IconButton(
                         icon: Icon(_isSearching ? Icons.close : Icons.search),
                         onPressed: () => setState(() {
@@ -255,6 +256,7 @@ jobs:
                       ? Semantics(
                           label: "Close selection button",
                           button: true,
+                          excludeSemantics: true,
                           child: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })),
                         )
                       : null,
@@ -269,7 +271,7 @@ jobs:
                                 ? Semantics(
                                     label: "Clear search button",
                                     button: true,
-                                    container: true,
+                                    excludeSemantics: true,
                                     child: IconButton(icon: const Icon(Icons.clear), onPressed: () => _searchCtrl.clear()),
                                   )
                                 : null,
@@ -280,11 +282,13 @@ jobs:
                           Semantics(
                             label: "Select all button",
                             button: true,
+                            excludeSemantics: true,
                             child: IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
                           ),
                           Semantics(
                             label: "Play selected button",
                             button: true,
+                            excludeSemantics: true,
                             child: IconButton(
                                 icon: const Icon(Icons.play_circle),
                                 onPressed: () {
@@ -382,17 +386,18 @@ jobs:
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        Semantics(label: "Previous button", button: true, child: IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prev)),
+                        Semantics(label: "Previous button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prev)),
                         Semantics(
                           label: _playing ? "Pause button" : "Play button",
                           button: true,
+                          excludeSemantics: true,
                           child: FloatingActionButton.large(
                             backgroundColor: Colors.blueAccent,
                             onPressed: () { if (_playing) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _playing = !_playing); },
                             child: Icon(_playing ? Icons.pause : Icons.play_arrow, size: 50),
                           ),
                         ),
-                        Semantics(label: "Next button", button: true, child: IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _next)),
+                        Semantics(label: "Next button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _next)),
                       ],
                     ),
                   ],
@@ -410,5 +415,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.18
+          name: NKPlayer-v1.0.19
           path: build/app/outputs/flutter-apk/app-release.apk
