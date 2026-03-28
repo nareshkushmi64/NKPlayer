@@ -56,28 +56,18 @@ jobs:
               <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />
               <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK\" />\n'''
 
-          # foreground service declaration inside <application>
-          service = '''
-              <service
-                  android:name=\"com.ryanheise.audioservice.AudioServiceActivity\$AudioHandler\"
-                  android:exported=\"true\"
-                  android:foregroundServiceType=\"mediaPlayback\">
-                  <intent-filter>
-                      <action android:name=\"android.media.browse.MediaBrowserService\" />
-                  </intent-filter>
-              </service>
-              <receiver android:name=\"com.ryanheise.audioservice.MediaButtonReceiver\"
-                  android:exported=\"true\">
-                  <intent-filter>
-                      <action android:name=\"android.intent.action.MEDIA_BUTTON\" />
-                  </intent-filter>
-              </receiver>'''
-
           content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\"')
-          content = content.replace('</application>', service + '\n    </application>')
           with open(path, 'w') as f:
               f.write(content)
           "
+
+          # ── MainActivity.kt: must extend AudioServiceActivity ────────────────
+          mkdir -p android/app/src/main/kotlin/com/nareshkushmi/nkplayer
+          cat <<'KT' > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MainActivity.kt
+          package com.nareshkushmi.nkplayer
+          import com.ryanheise.audioservice.AudioServiceActivity
+          class MainActivity : AudioServiceActivity()
+          KT
 
           # ── lib/main.dart ─────────────────────────────────────────────────────
           cat <<'DART' > lib/main.dart
@@ -211,18 +201,28 @@ jobs:
           Future<void> main() async {
             WidgetsFlutterBinding.ensureInitialized();
 
-            // Register the handler with audio_service
-            audioHandler = await AudioService.init(
-              builder: () => NKAudioHandler(),
-              config: const AudioServiceConfig(
-                androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel',
-                androidNotificationChannelName: 'NKPlayer',
-                androidNotificationOngoing: false,
-                androidStopForegroundOnPause: false,
-                notificationColor: Colors.blueAccent,
-                androidNotificationIcon: 'mipmap/ic_launcher',
-              ),
-            );
+            try {
+              audioHandler = await AudioService.init(
+                builder: () => NKAudioHandler(),
+                config: const AudioServiceConfig(
+                  androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel',
+                  androidNotificationChannelName: 'NKPlayer',
+                  androidStopForegroundOnPause: true,
+                  notificationColor: Color(0xFF2196F3),
+                  androidNotificationIcon: 'mipmap/ic_launcher',
+                  androidShowNotificationBadge: true,
+                ),
+              );
+            } catch (e) {
+              debugPrint('AudioService init error: $e');
+              audioHandler = await AudioService.init(
+                builder: () => NKAudioHandler(),
+                config: const AudioServiceConfig(
+                  androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel',
+                  androidNotificationChannelName: 'NKPlayer',
+                ),
+              );
+            }
 
             runApp(MaterialApp(
               title: 'NKPlayer',
