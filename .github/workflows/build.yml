@@ -118,12 +118,17 @@ jobs:
           import android.content.BroadcastReceiver
           import android.content.Context
           import android.content.Intent
+          import android.os.Build
 
           class MusicReceiver : BroadcastReceiver() {
               override fun onReceive(context: Context, intent: Intent) {
                   val serviceIntent = Intent(context, MusicService::class.java)
                   serviceIntent.action = intent.action
-                  context.startService(serviceIntent)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      context.startForegroundService(serviceIntent)
+                  } else {
+                      context.startService(serviceIntent)
+                  }
               }
           }
           KT
@@ -134,6 +139,7 @@ jobs:
 
           import android.app.*
           import android.content.Intent
+          import android.media.MediaPlayer
           import android.os.Build
           import android.os.IBinder
           import android.support.v4.media.MediaMetadataCompat
@@ -145,8 +151,8 @@ jobs:
           class MusicService : Service() {
 
               companion object {
-                  const val CHANNEL_ID    = "nkplayer_channel"
-                  const val NOTIF_ID      = 1
+                  const val CHANNEL_ID         = "nkplayer_channel"
+                  const val NOTIF_ID           = 1
                   const val ACTION_PREV        = "com.nareshkushmi.nkplayer.PREV"
                   const val ACTION_PLAY_PAUSE  = "com.nareshkushmi.nkplayer.PLAY_PAUSE"
                   const val ACTION_NEXT        = "com.nareshkushmi.nkplayer.NEXT"
@@ -155,17 +161,24 @@ jobs:
                   const val EXTRA_TITLE        = "title"
                   const val EXTRA_ARTIST       = "artist"
                   const val EXTRA_IS_PLAYING   = "is_playing"
+                  const val EXTRA_PATHS        = "paths"
+                  const val EXTRA_INDEX        = "index"
 
-                  // Flutter MethodChannel can update these
-                  var onPrev:      (() -> Unit)? = null
-                  var onPlayPause: (() -> Unit)? = null
-                  var onNext:      (() -> Unit)? = null
+                  // Shared state so MainActivity can sync UI
+                  var playlist: ArrayList<String> = arrayListOf()
+                  var currentIndex: Int = 0
+                  var isPlaying: Boolean = false
+
+                  // Callback to update Flutter UI when song changes
+                  var onSongChanged: ((index: Int, isPlaying: Boolean) -> Unit)? = null
               }
 
+              private var mediaPlayer: MediaPlayer? = null
               private lateinit var mediaSession: MediaSessionCompat
               private var songTitle  = "NKPlayer"
               private var songArtist = "Unknown"
-              private var isPlaying  = true
+              private var songTitles: ArrayList<String> = arrayListOf()
+              private var songArtists: ArrayList<String> = arrayListOf()
 
               override fun onBind(intent: Intent?): IBinder? = null
 
@@ -180,26 +193,105 @@ jobs:
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
                   when (intent?.action) {
                       ACTION_STOP -> {
+                          stopPlayback()
                           stopForeground(true)
                           stopSelf()
                           return START_NOT_STICKY
                       }
-                      ACTION_PREV       -> onPrev?.invoke()
-                      ACTION_PLAY_PAUSE -> onPlayPause?.invoke()
-                      ACTION_NEXT       -> onNext?.invoke()
+                      ACTION_PREV -> {
+                          if (currentIndex > 0) {
+                              currentIndex--
+                              playCurrentTrack()
+                          }
+                      }
+                      ACTION_PLAY_PAUSE -> {
+                          togglePlayPause()
+                      }
+                      ACTION_NEXT -> {
+                          if (currentIndex < playlist.size - 1) {
+                              currentIndex++
+                              playCurrentTrack()
+                          }
+                      }
                       ACTION_UPDATE, null -> {
-                          songTitle  = intent?.getStringExtra(EXTRA_TITLE)     ?: songTitle
-                          songArtist = intent?.getStringExtra(EXTRA_ARTIST)    ?: songArtist
-                          isPlaying  = intent?.getBooleanExtra(EXTRA_IS_PLAYING, true) ?: isPlaying
-                          updateMediaSession()
-                          startForeground(NOTIF_ID, buildNotification())
+                          // New playlist from Flutter
+                          val paths = intent?.getStringArrayListExtra(EXTRA_PATHS)
+                          val titles = intent?.getStringArrayListExtra("titles")
+                          val artists = intent?.getStringArrayListExtra("artists")
+                          val index = intent?.getIntExtra(EXTRA_INDEX, 0) ?: 0
+                          if (paths != null) {
+                              playlist = paths
+                              songTitles = titles ?: arrayListOf()
+                              songArtists = artists ?: arrayListOf()
+                              currentIndex = index
+                              playCurrentTrack()
+                          } else {
+                              // Just update notification text
+                              songTitle  = intent?.getStringExtra(EXTRA_TITLE)  ?: songTitle
+                              songArtist = intent?.getStringExtra(EXTRA_ARTIST) ?: songArtist
+                              isPlaying  = intent?.getBooleanExtra(EXTRA_IS_PLAYING, true) ?: isPlaying
+                              updateNotification()
+                          }
                       }
                   }
-                  // Always refresh notification after any action
-                  if (intent?.action in listOf(ACTION_PREV, ACTION_PLAY_PAUSE, ACTION_NEXT)) {
-                      startForeground(NOTIF_ID, buildNotification())
-                  }
                   return START_STICKY
+              }
+
+              private fun playCurrentTrack() {
+                  if (playlist.isEmpty()) return
+                  stopPlayback()
+
+                  songTitle  = if (currentIndex < songTitles.size) songTitles[currentIndex] else "Unknown"
+                  songArtist = if (currentIndex < songArtists.size) songArtists[currentIndex] else "Unknown"
+
+                  mediaPlayer = MediaPlayer().apply {
+                      setDataSource(playlist[currentIndex])
+                      prepare()
+                      start()
+                      setOnCompletionListener {
+                          if (currentIndex < playlist.size - 1) {
+                              currentIndex++
+                              playCurrentTrack()
+                          } else {
+                              isPlaying = false
+                              updateNotification()
+                          }
+                      }
+                  }
+                  isPlaying = true
+                  MusicService.currentIndex = currentIndex
+                  MusicService.isPlaying = true
+                  onSongChanged?.invoke(currentIndex, true)
+                  startForeground(NOTIF_ID, buildNotification())
+              }
+
+              private fun togglePlayPause() {
+                  val mp = mediaPlayer ?: return
+                  if (mp.isPlaying) {
+                      mp.pause()
+                      isPlaying = false
+                  } else {
+                      mp.start()
+                      isPlaying = true
+                  }
+                  MusicService.isPlaying = isPlaying
+                  onSongChanged?.invoke(currentIndex, isPlaying)
+                  updateNotification()
+              }
+
+              private fun stopPlayback() {
+                  mediaPlayer?.apply {
+                      if (isPlaying) stop()
+                      release()
+                  }
+                  mediaPlayer = null
+                  isPlaying = false
+              }
+
+              private fun updateNotification() {
+                  updateMediaSession()
+                  val nm = getSystemService(NotificationManager::class.java)
+                  nm.notify(NOTIF_ID, buildNotification())
               }
 
               private fun updateMediaSession() {
@@ -219,33 +311,19 @@ jobs:
                       .setState(
                           if (isPlaying) PlaybackStateCompat.STATE_PLAYING
                           else PlaybackStateCompat.STATE_PAUSED,
-                          PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN,
-                          1f
+                          PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f
                       )
                       .build()
                   mediaSession.setPlaybackState(state)
               }
 
               private fun buildNotification(): Notification {
-                  val prevIntent = PendingIntent.getBroadcast(
-                      this, 0,
-                      Intent(ACTION_PREV).setPackage(packageName),
-                      PendingIntent.FLAG_IMMUTABLE
-                  )
-                  val playPauseIntent = PendingIntent.getBroadcast(
-                      this, 1,
-                      Intent(ACTION_PLAY_PAUSE).setPackage(packageName),
-                      PendingIntent.FLAG_IMMUTABLE
-                  )
-                  val nextIntent = PendingIntent.getBroadcast(
-                      this, 2,
-                      Intent(ACTION_NEXT).setPackage(packageName),
-                      PendingIntent.FLAG_IMMUTABLE
-                  )
-                  val stopIntent = PendingIntent.getBroadcast(
-                      this, 3,
-                      Intent(ACTION_STOP).setPackage(packageName),
-                      PendingIntent.FLAG_IMMUTABLE
+                  updateMediaSession()
+
+                  fun pi(requestCode: Int, action: String) = PendingIntent.getBroadcast(
+                      this, requestCode,
+                      Intent(action).setPackage(packageName),
+                      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
                   )
 
                   val playPauseIcon = if (isPlaying)
@@ -260,10 +338,10 @@ jobs:
                       .setOngoing(isPlaying)
                       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                       .setPriority(NotificationCompat.PRIORITY_LOW)
-                      .addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent)
-                      .addAction(playPauseIcon, if (isPlaying) "Pause" else "Play", playPauseIntent)
-                      .addAction(android.R.drawable.ic_media_next, "Next", nextIntent)
-                      .addAction(android.R.drawable.ic_delete, "Stop", stopIntent)
+                      .addAction(android.R.drawable.ic_media_previous, "Prev",      pi(0, ACTION_PREV))
+                      .addAction(playPauseIcon, if (isPlaying) "Pause" else "Play", pi(1, ACTION_PLAY_PAUSE))
+                      .addAction(android.R.drawable.ic_media_next,     "Next",      pi(2, ACTION_NEXT))
+                      .addAction(android.R.drawable.ic_delete,         "Stop",      pi(3, ACTION_STOP))
                       .setStyle(
                           MediaStyle()
                               .setMediaSession(mediaSession.sessionToken)
@@ -274,24 +352,23 @@ jobs:
 
               private fun createNotificationChannel() {
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      val channel = NotificationChannel(
+                      val ch = NotificationChannel(
                           CHANNEL_ID, "NKPlayer", NotificationManager.IMPORTANCE_LOW
                       ).apply {
                           description = "NKPlayer music playback"
                           setSound(null, null)
                       }
-                      getSystemService(NotificationManager::class.java)
-                          .createNotificationChannel(channel)
+                      getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
                   }
               }
 
-              // Called when app is swiped from recents — keep playing!
               override fun onTaskRemoved(rootIntent: Intent?) {
                   super.onTaskRemoved(rootIntent)
-                  // Do NOT stop — music keeps playing in background
+                  // Keep playing — do NOT stop
               }
 
               override fun onDestroy() {
+                  stopPlayback()
                   mediaSession.release()
                   super.onDestroy()
               }
@@ -310,59 +387,36 @@ jobs:
 
           class MainActivity : FlutterActivity() {
               private val CHANNEL = "com.nareshkushmi.nkplayer/music_service"
-              private var methodChannel: MethodChannel? = null
 
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
 
-                  methodChannel = MethodChannel(
-                      flutterEngine.dartExecutor.binaryMessenger, CHANNEL
-                  )
+                  val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
 
-                  // Register notification button callbacks → send to Flutter
-                  MusicService.onPrev = {
+                  // When service changes song/state → update Flutter UI
+                  MusicService.onSongChanged = { index, playing ->
                       runOnUiThread {
-                          methodChannel?.invokeMethod("onPrev", null)
-                      }
-                  }
-                  MusicService.onPlayPause = {
-                      runOnUiThread {
-                          methodChannel?.invokeMethod("onPlayPause", null)
-                      }
-                  }
-                  MusicService.onNext = {
-                      runOnUiThread {
-                          methodChannel?.invokeMethod("onNext", null)
+                          ch.invokeMethod("onSongChanged", mapOf("index" to index, "isPlaying" to playing))
                       }
                   }
 
-                  methodChannel?.setMethodCallHandler { call, result ->
+                  ch.setMethodCallHandler { call, result ->
                       when (call.method) {
                           "startService" -> {
                               val intent = Intent(this, MusicService::class.java).apply {
                                   action = MusicService.ACTION_UPDATE
-                                  putExtra(MusicService.EXTRA_TITLE,     call.argument("title") ?: "")
-                                  putExtra(MusicService.EXTRA_ARTIST,    call.argument("artist") ?: "")
-                                  putExtra(MusicService.EXTRA_IS_PLAYING, true)
+                                  putStringArrayListExtra(MusicService.EXTRA_PATHS,   call.argument("paths")   ?: arrayListOf<String>())
+                                  putStringArrayListExtra("titles",                   call.argument("titles")  ?: arrayListOf<String>())
+                                  putStringArrayListExtra("artists",                  call.argument("artists") ?: arrayListOf<String>())
+                                  putExtra(MusicService.EXTRA_INDEX, call.argument<Int>("index") ?: 0)
                               }
-                              startFgService(intent)
-                              result.success(null)
-                          }
-                          "updateService" -> {
-                              val intent = Intent(this, MusicService::class.java).apply {
-                                  action = MusicService.ACTION_UPDATE
-                                  putExtra(MusicService.EXTRA_TITLE,      call.argument("title") ?: "")
-                                  putExtra(MusicService.EXTRA_ARTIST,     call.argument("artist") ?: "")
-                                  putExtra(MusicService.EXTRA_IS_PLAYING, call.argument<Boolean>("isPlaying") ?: true)
-                              }
-                              startFgService(intent)
+                              startFg(intent)
                               result.success(null)
                           }
                           "stopService" -> {
-                              val intent = Intent(this, MusicService::class.java).apply {
+                              startService(Intent(this, MusicService::class.java).apply {
                                   action = MusicService.ACTION_STOP
-                              }
-                              startService(intent)
+                              })
                               result.success(null)
                           }
                           else -> result.notImplemented()
@@ -370,7 +424,7 @@ jobs:
                   }
               }
 
-              private fun startFgService(intent: Intent) {
+              private fun startFg(intent: Intent) {
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                       startForegroundService(intent)
                   else
@@ -384,55 +438,53 @@ jobs:
           import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
-          import 'package:audioplayers/audioplayers.dart';
           import 'package:on_audio_query/on_audio_query.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
 
           // ─────────────────────────────────────────────────────────────────────
-          //  Music Service Bridge
+          //  Music Service Bridge  — Service handles audio, Flutter handles UI
           // ─────────────────────────────────────────────────────────────────────
           class MusicServiceBridge {
             static const _ch = MethodChannel('com.nareshkushmi.nkplayer/music_service');
 
-            static Future<void> start(String title, String artist) =>
-                _ch.invokeMethod('startService', {'title': title, 'artist': artist});
-
-            static Future<void> update(String title, String artist, bool isPlaying) =>
-                _ch.invokeMethod('updateService', {
-                  'title': title,
-                  'artist': artist,
-                  'isPlaying': isPlaying,
+            // Start service with full playlist — service plays audio natively
+            static Future<void> start({
+              required List<SongModel> songs,
+              required int index,
+            }) async {
+              try {
+                await _ch.invokeMethod('startService', {
+                  'paths':   songs.map((s) => s.data).toList(),
+                  'titles':  songs.map((s) => s.title).toList(),
+                  'artists': songs.map((s) => s.artist ?? 'Unknown').toList(),
+                  'index':   index,
                 });
+              } catch (e) {
+                debugPrint('startService error: $e');
+              }
+            }
 
-            static Future<void> stop() => _ch.invokeMethod('stopService');
+            static Future<void> stop() async {
+              try { await _ch.invokeMethod('stopService'); } catch (_) {}
+            }
 
-            // Listen for notification button presses from native side
-            static void setCallbacks({
-              required VoidCallback onPrev,
-              required VoidCallback onPlayPause,
-              required VoidCallback onNext,
-            }) {
+            // Called when notification buttons (prev/next/play-pause) are tapped
+            static void setOnSongChanged(void Function(int index, bool isPlaying) cb) {
               _ch.setMethodCallHandler((call) async {
-                switch (call.method) {
-                  case 'onPrev':      onPrev();      break;
-                  case 'onPlayPause': onPlayPause(); break;
-                  case 'onNext':      onNext();      break;
+                if (call.method == 'onSongChanged') {
+                  final idx      = call.arguments['index']     as int;
+                  final playing  = call.arguments['isPlaying'] as bool;
+                  cb(idx, playing);
                 }
               });
             }
           }
 
           // ─────────────────────────────────────────────────────────────────────
-          //  Global Player Manager
+          //  Main
           // ─────────────────────────────────────────────────────────────────────
-          class PlayerManager {
-            static final AudioPlayer player = AudioPlayer();
-            static List<SongModel> playlist = [];
-            static int currentIndex = 0;
-          }
-
           void main() {
             WidgetsFlutterBinding.ensureInitialized();
             runApp(const NKPlayerApp());
@@ -610,7 +662,8 @@ jobs:
                                 onTap: () => Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                        builder: (_) => SongListScreen(folder: f))),
+                                        builder: (_) =>
+                                            SongListScreen(folder: f))),
                               );
                             },
                           ),
@@ -727,7 +780,7 @@ jobs:
           }
 
           // ─────────────────────────────────────────────────────────────────────
-          //  Player Screen
+          //  Player Screen — UI only, audio is handled by MusicService
           // ─────────────────────────────────────────────────────────────────────
           class PlayerScreen extends StatefulWidget {
             final List<SongModel> songs;
@@ -739,81 +792,50 @@ jobs:
           }
 
           class _PlayerScreenState extends State<PlayerScreen> {
-            bool _playing = false;
-            Duration _pos = Duration.zero;
-            Duration _dur = Duration.zero;
+            late int _currentIdx;
+            bool _playing = true;
 
             @override
             void initState() {
               super.initState();
-              PlayerManager.playlist = widget.songs;
-              PlayerManager.currentIndex = widget.initialIndex;
+              _currentIdx = widget.initialIndex;
 
-              // Listen for notification button callbacks from native
-              MusicServiceBridge.setCallbacks(
-                onPrev:      _prev,
-                onPlayPause: _togglePlay,
-                onNext:      _next,
-              );
+              // Start native service with full playlist
+              MusicServiceBridge.start(songs: widget.songs, index: widget.initialIndex);
 
-              PlayerManager.player.onPositionChanged
-                  .listen((p) { if (mounted) setState(() => _pos = p); });
-              PlayerManager.player.onDurationChanged
-                  .listen((d) { if (mounted) setState(() => _dur = d); });
-              PlayerManager.player.onPlayerComplete.listen((_) => _next());
-
-              _playCurrent();
+              // Listen for changes from notification buttons
+              MusicServiceBridge.setOnSongChanged((idx, isPlaying) {
+                if (mounted) setState(() { _currentIdx = idx; _playing = isPlaying; });
+              });
             }
 
-            Future<void> _playCurrent() async {
-              final song = PlayerManager.playlist[PlayerManager.currentIndex];
-              try {
-                await PlayerManager.player.play(DeviceFileSource(song.data));
-                if (mounted) setState(() => _playing = true);
-                await MusicServiceBridge.start(
-                    song.title, song.artist ?? 'Unknown Artist');
-              } catch (e) {
-                debugPrint('Playback error: $e');
+            SongModel get _song => widget.songs[_currentIdx];
+
+            void _prev() {
+              if (_currentIdx > 0) {
+                MusicServiceBridge.start(songs: widget.songs, index: _currentIdx - 1);
               }
             }
 
             void _next() {
-              if (PlayerManager.currentIndex < PlayerManager.playlist.length - 1) {
-                PlayerManager.currentIndex++;
-                if (mounted) setState(() {});
-                _playCurrent();
-              } else {
-                MusicServiceBridge.stop();
-                if (mounted) setState(() => _playing = false);
+              if (_currentIdx < widget.songs.length - 1) {
+                MusicServiceBridge.start(songs: widget.songs, index: _currentIdx + 1);
               }
             }
 
-            void _prev() {
-              if (PlayerManager.currentIndex > 0) {
-                PlayerManager.currentIndex--;
-                if (mounted) setState(() {});
-                _playCurrent();
-              }
+            void _togglePlay() {
+              // Send play-pause directly via broadcast
+              const platform = MethodChannel('com.nareshkushmi.nkplayer/music_service');
+              platform.invokeMethod('startService', {
+                'paths':   widget.songs.map((s) => s.data).toList(),
+                'titles':  widget.songs.map((s) => s.title).toList(),
+                'artists': widget.songs.map((s) => s.artist ?? 'Unknown').toList(),
+                'index':   _currentIdx,
+              });
             }
-
-            void _togglePlay() async {
-              if (_playing) {
-                await PlayerManager.player.pause();
-              } else {
-                await PlayerManager.player.resume();
-              }
-              if (mounted) setState(() => _playing = !_playing);
-              final song = PlayerManager.playlist[PlayerManager.currentIndex];
-              await MusicServiceBridge.update(
-                  song.title, song.artist ?? 'Unknown Artist', !_playing);
-            }
-
-            String _fmt(Duration d) =>
-                d.toString().split('.').first.padLeft(8, '0').substring(2);
 
             @override
             Widget build(BuildContext context) {
-              final song = PlayerManager.playlist[PlayerManager.currentIndex];
               return Scaffold(
                 appBar: AppBar(title: const Text('Now Playing')),
                 body: Column(
@@ -825,7 +847,7 @@ jobs:
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(
-                        song.title,
+                        _song.title,
                         textAlign: TextAlign.center,
                         maxLines: 2,
                         style: GoogleFonts.poppins(
@@ -833,34 +855,10 @@ jobs:
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(song.artist ?? 'Unknown Artist',
+                    Text(_song.artist ?? 'Unknown Artist',
                         style:
                             const TextStyle(color: Colors.grey, fontSize: 14)),
-                    Slider(
-                      value: _pos.inSeconds.toDouble().clamp(
-                          0,
-                          _dur.inSeconds.toDouble() > 0
-                              ? _dur.inSeconds.toDouble()
-                              : 1),
-                      max: _dur.inSeconds.toDouble() > 0
-                          ? _dur.inSeconds.toDouble()
-                          : 1.0,
-                      onChanged: (v) =>
-                          PlayerManager.player.seek(Duration(seconds: v.toInt())),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(_fmt(_pos),
-                              style: const TextStyle(color: Colors.grey)),
-                          Text(_fmt(_dur),
-                              style: const TextStyle(color: Colors.grey)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 40),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
