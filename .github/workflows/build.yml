@@ -302,6 +302,11 @@ jobs:
                                   action = MusicService.ACTION_STOP })
                               result.success(null)
                           }
+                          "togglePlayPause" -> {
+                              startService(Intent(this, MusicService::class.java).apply {
+                                  action = MusicService.ACTION_PLAY_PAUSE })
+                              result.success(null)
+                          }
                           else -> result.notImplemented()
                       }
                   }
@@ -334,6 +339,10 @@ jobs:
 
           Future<void> stopMusic() async {
             try { await _ch.invokeMethod('stop'); } catch (_) {}
+          }
+
+          Future<void> togglePlayPause() async {
+            try { await _ch.invokeMethod('togglePlayPause'); } catch (_) {}
           }
 
           void main() {
@@ -638,7 +647,7 @@ jobs:
                         ),
                         FloatingActionButton.large(
                           backgroundColor: Colors.blueAccent,
-                          onPressed: () => startMusic(widget.songs, _idx),
+                          onPressed: () => togglePlayPause(),
                           child: Icon(
                               _playing ? Icons.pause : Icons.play_arrow,
                               size: 50),
