@@ -1,4 +1,4 @@
-name: NKPlayer - Final Playback & Permission Fix (v1.0.28)
+name: NKPlayer - Android 16 Support (v1.0.51)
 on: [push]
 
 jobs:
@@ -17,26 +17,21 @@ jobs:
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # App Label and Target SDK 35 (Stable Android 15 Support)
+          # App Label and Target SDK 36 (Android 16 Compatible)
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
-          sed -i 's/targetSdkVersion .*/targetSdkVersion 35/' android/app/build.gradle || true
+          sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           
-          # Force Jetifier & AndroidX settings
-          echo "android.useAndroidX=true" >> android/gradle.properties
-          echo "android.enableJetifier=true" >> android/gradle.properties
-
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.28+118
+          version: 1.0.51+52
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
           dependencies:
             flutter:
               sdk: flutter
-            just_audio: ^0.9.36
-            just_audio_background: ^0.0.1-beta.11
+            audioplayers: ^5.2.1
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
@@ -45,33 +40,18 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Critical Permissions for Audio and Scoped Storage
+          # Permissions for Android 10 to Android 16
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
-          
-          perms = '''    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />
-              <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />
-              <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
+          perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />
+              <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />
               <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\" />
-              <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />
-              <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />
-              <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK\" />\n'''
-          
-          service_tag = '''
-                  <service android:name=\"com.ryanheise.audioservice.AudioService\"
-                      android:foregroundServiceType=\"mediaPlayback\"
-                      android:exported=\"true\">
-                      <intent-filter>
-                          <action android:name=\"android.media.browse.MediaBrowserService\" />
-                      </intent-filter>
-                  </service>\n'''
-          
-          content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\" android:usesCleartextTraffic=\"true\"')
-          content = content.replace('</activity>', '</activity>' + service_tag)
-          
+              <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
+              <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n'''
+          content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\"')
           with open(path, 'w') as f:
               f.write(content)
           "
@@ -80,8 +60,7 @@ jobs:
           import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:on_audio_query/on_audio_query.dart';
-          import 'package:just_audio/just_audio.dart';
-          import 'package:just_audio_background/just_audio_background.dart';
+          import 'package:audioplayers/audioplayers.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
@@ -89,39 +68,18 @@ jobs:
           class PlayerManager {
             static final AudioPlayer player = AudioPlayer();
             static List<SongModel> currentPlaylist = [];
+            static int currentIndex = 0;
           }
 
-          Future<void> main() async {
-            try {
-              WidgetsFlutterBinding.ensureInitialized();
-              await JustAudioBackground.init(
-                androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel.audio',
-                androidNotificationChannelName: 'NKPlayer Audio Playback',
-                androidNotificationOngoing: true,
-                androidShowNotificationBadge: true,
-              );
-            } catch (e) {
-              debugPrint("Init Error: $e");
-            }
-            runApp(const NKPlayerApp());
-          }
-
-          class NKPlayerApp extends StatelessWidget {
-            const NKPlayerApp({super.key});
-            @override
-            Widget build(BuildContext context) {
-              return MaterialApp(
+          void main() => runApp(MaterialApp(
                 title: 'NKPlayer',
                 debugShowCheckedModeBanner: false,
                 theme: ThemeData.dark().copyWith(
                   primaryColor: Colors.blueAccent,
                   scaffoldBackgroundColor: const Color(0xFF0F0F0F),
-                  appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF0F0F0F), elevation: 0),
                 ),
                 home: const PermissionHandlerScreen(),
-              );
-            }
-          }
+              ));
 
           class PermissionHandlerScreen extends StatefulWidget {
             const PermissionHandlerScreen({super.key});
@@ -139,9 +97,11 @@ jobs:
             Future<void> _checkPermissions() async {
               if (Platform.isAndroid) {
                 final info = await DeviceInfoPlugin().androidInfo;
-                if (info.version.sdkInt >= 33) {
+                int sdk = info.version.sdkInt;
+                // Handling permissions for Android 10 (29) to Android 16 (36)
+                if (sdk >= 33) {
                   await [Permission.audio, Permission.notification].request();
-                } else if (info.version.sdkInt >= 30) {
+                } else if (sdk >= 30) {
                   await Permission.manageExternalStorage.request();
                 } else {
                   await Permission.storage.request();
@@ -207,14 +167,16 @@ jobs:
                       ? TextField(
                           controller: _searchCtrl,
                           autofocus: true,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(hintText: "Search songs...", border: InputBorder.none, hintStyle: TextStyle(color: Colors.grey)),
+                          decoration: const InputDecoration(hintText: "Search all songs...", border: InputBorder.none),
                         )
-                      : Text("NKPlayer Folders", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                      : Text("Folders", style: GoogleFonts.poppins()),
                   actions: [
                     IconButton(
                       icon: Icon(_isSearching ? Icons.close : Icons.search),
-                      onPressed: () => setState(() { _isSearching = !_isSearching; if (!_isSearching) _searchCtrl.clear(); }),
+                      onPressed: () => setState(() {
+                        _isSearching = !_isSearching;
+                        if (!_isSearching) _searchCtrl.clear();
+                      }),
                     )
                   ],
                 ),
@@ -225,7 +187,7 @@ jobs:
                             itemCount: _filteredSongs.length,
                             itemBuilder: (context, i) => ListTile(
                               leading: const Icon(Icons.music_note, color: Colors.blueAccent),
-                              title: Text(_filteredSongs[i].title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                              title: Text(_filteredSongs[i].title, maxLines: 1),
                               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filteredSongs, initialIndex: i))),
                             ),
                           )
@@ -234,9 +196,9 @@ jobs:
                             itemBuilder: (context, i) {
                               final f = _folders[i];
                               return ListTile(
-                                leading: const Icon(Icons.folder, color: Colors.amber, size: 35),
-                                title: Text(f.name, style: const TextStyle(fontWeight: FontWeight.w500)),
-                                subtitle: Text("${f.songs.length} songs"),
+                                leading: const Icon(Icons.folder, color: Colors.amber),
+                                title: Text(f.name),
+                                subtitle: Text("${f.songs.length} media files"),
                                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: f))),
                               );
                             },
@@ -253,19 +215,63 @@ jobs:
           }
 
           class _SongListScreenState extends State<SongListScreen> {
+            final TextEditingController _searchCtrl = TextEditingController();
+            final Set<int> _selected = {};
+            bool _isSel = false;
+            List<SongModel> _filtered = [];
+
+            @override
+            void initState() {
+              super.initState();
+              _filtered = widget.folder.songs;
+              _searchCtrl.addListener(() {
+                setState(() {
+                  _filtered = widget.folder.songs.where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase())).toList();
+                });
+              });
+            }
+
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: Text(widget.folder.name)),
+                appBar: AppBar(
+                  leading: _isSel ? IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })) : null,
+                  title: _isSel
+                      ? Text("${_selected.length} Selected")
+                      : TextField(
+                          controller: _searchCtrl,
+                          decoration: const InputDecoration(hintText: "Search in folder...", border: InputBorder.none),
+                        ),
+                  actions: _isSel
+                      ? [
+                          IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
+                          IconButton(
+                                icon: const Icon(Icons.play_circle),
+                                onPressed: () {
+                                  Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _selected.map((i) => _filtered[i]).toList(), initialIndex: 0)));
+                                }),
+                        ]
+                      : null,
+                ),
                 body: ListView.builder(
-                  itemCount: widget.folder.songs.length,
+                  itemCount: _filtered.length,
                   itemBuilder: (context, i) {
-                    final song = widget.folder.songs[i];
+                    final isS = _selected.contains(i);
                     return ListTile(
-                      leading: const Icon(Icons.music_note, color: Colors.blueAccent),
-                      title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text(song.artist ?? "Unknown Artist", maxLines: 1),
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: widget.folder.songs, initialIndex: i))),
+                      tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
+                      leading: Icon(isS ? Icons.check_circle : Icons.music_note, color: Colors.blueAccent),
+                      title: Text(_filtered[i].title, maxLines: 1),
+                      onLongPress: () => setState(() { _selected.add(i); _isSel = true; }),
+                      onTap: () {
+                        if (_isSel)
+                          setState(() {
+                            if (isS) _selected.remove(i);
+                            else _selected.add(i);
+                            _isSel = _selected.isNotEmpty;
+                          });
+                        else
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filtered, initialIndex: i)));
+                      },
                     );
                   },
                 ),
@@ -282,114 +288,74 @@ jobs:
           }
 
           class _PlayerScreenState extends State<PlayerScreen> {
+            bool _playing = false;
+            Duration _p = Duration.zero, _d = Duration.zero;
+
             @override
             void initState() {
               super.initState();
-              _initPlayer();
+              PlayerManager.currentPlaylist = widget.songs;
+              PlayerManager.currentIndex = widget.initialIndex;
+              PlayerManager.player.onPositionChanged.listen((p) => setState(() => _p = p));
+              PlayerManager.player.onDurationChanged.listen((d) => setState(() => _d = d));
+              PlayerManager.player.onPlayerComplete.listen((_) => _next());
+              _play();
             }
 
-            // FIX: Smart initialization to prevent loading lag and 00:00 bug
-            Future<void> _initPlayer() async {
+            void _play() async {
               try {
-                // If same playlist is already loaded, just seek. Don't re-load everything.
-                if (PlayerManager.currentPlaylist.length == widget.songs.length && 
-                    PlayerManager.player.currentIndex == widget.initialIndex &&
-                    PlayerManager.player.playing) {
-                  return;
-                }
-
-                PlayerManager.currentPlaylist = widget.songs;
-                final playlist = ConcatenatingAudioSource(
-                  children: widget.songs.map((s) => AudioSource.uri(
-                    Uri.parse(s.uri!),
-                    tag: MediaItem(id: s.id.toString(), title: s.title, artist: s.artist, album: s.album),
-                  )).toList(),
-                );
-
-                await PlayerManager.player.setAudioSource(playlist, initialIndex: widget.initialIndex);
-                PlayerManager.player.play();
+                await PlayerManager.player.play(DeviceFileSource(PlayerManager.currentPlaylist[PlayerManager.currentIndex].data));
+                setState(() => _playing = true);
               } catch (e) {
                 debugPrint("Playback Error: $e");
               }
             }
 
-            String _formatDuration(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
+            void _next() { if (PlayerManager.currentIndex < PlayerManager.currentPlaylist.length - 1) { PlayerManager.currentIndex++; _play(); } }
+            void _prev() { if (PlayerManager.currentIndex > 0) { PlayerManager.currentIndex--; _play(); } }
+            String _fmt(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
 
             @override
             Widget build(BuildContext context) {
+              final s = PlayerManager.currentPlaylist[PlayerManager.currentIndex];
               return Scaffold(
                 appBar: AppBar(title: const Text("Now Playing")),
-                body: StreamBuilder<SequenceState?>(
-                  stream: PlayerManager.player.sequenceStateStream,
-                  builder: (context, snapshot) {
-                    final state = snapshot.data;
-                    if (state == null) return const Center(child: CircularProgressIndicator());
-                    final meta = state.currentSource!.tag as MediaItem;
-
-                    return Padding(
+                body: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
+                    const SizedBox(height: 30),
+                    Text(s.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Slider(
+                      activeColor: Colors.blueAccent,
+                      value: _p.inSeconds.toDouble(), 
+                      max: _d.inSeconds.toDouble() > 0 ? _d.inSeconds.toDouble() : 1.0, 
+                      onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt()))
+                    ),
+                    Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Container(
-                            height: 250, width: 250,
-                            decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-                            child: const Icon(Icons.music_note, size: 120, color: Colors.blueAccent),
-                          ),
-                          const SizedBox(height: 40),
-                          Text(meta.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold), maxLines: 2),
-                          const SizedBox(height: 8),
-                          Text(meta.artist ?? "Unknown Artist", style: const TextStyle(color: Colors.grey, fontSize: 16)),
-                          const SizedBox(height: 30),
-                          StreamBuilder<Duration>(
-                            stream: PlayerManager.player.positionStream,
-                            builder: (context, posSnap) {
-                              final pos = posSnap.data ?? Duration.zero;
-                              final dur = PlayerManager.player.duration ?? Duration.zero;
-                              return Column(
-                                children: [
-                                  Slider(
-                                    activeColor: Colors.blueAccent,
-                                    inactiveColor: Colors.grey.withOpacity(0.3),
-                                    value: pos.inSeconds.toDouble(),
-                                    max: dur.inSeconds.toDouble() > 0 ? dur.inSeconds.toDouble() : 1.0,
-                                    onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt())),
-                                  ),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [Text(_formatDuration(pos)), Text(_formatDuration(dur))],
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 40),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: () => PlayerManager.player.seekToPrevious()),
-                              StreamBuilder<PlayerState>(
-                                stream: PlayerManager.player.playerStateStream,
-                                builder: (context, psSnap) {
-                                  final playing = psSnap.data?.playing ?? false;
-                                  final processing = psSnap.data?.processingState;
-                                  if (processing == ProcessingState.buffering || processing == ProcessingState.loading) {
-                                    return const CircularProgressIndicator();
-                                  }
-                                  return FloatingActionButton.large(
-                                    backgroundColor: Colors.blueAccent,
-                                    onPressed: playing ? PlayerManager.player.pause : PlayerManager.player.play,
-                                    child: Icon(playing ? Icons.pause : Icons.play_arrow, size: 50, color: Colors.white),
-                                  );
-                                },
-                              ),
-                              IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: () => PlayerManager.player.seekToNext()),
-                            ],
-                          ),
+                          Text(_fmt(_p), style: const TextStyle(color: Colors.grey)),
+                          Text(_fmt(_d), style: const TextStyle(color: Colors.grey)),
                         ],
                       ),
-                    );
-                  },
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prev),
+                        FloatingActionButton.large(
+                          backgroundColor: Colors.blueAccent,
+                          onPressed: () { if (_playing) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _playing = !_playing); },
+                          child: Icon(_playing ? Icons.pause : Icons.play_arrow, size: 50, color: Colors.white),
+                        ),
+                        IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _next),
+                      ],
+                    ),
+                  ],
                 ),
               );
             }
@@ -404,5 +370,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.28
+          name: NKPlayer-v1.0.51
           path: build/app/outputs/flutter-apk/app-release.apk
