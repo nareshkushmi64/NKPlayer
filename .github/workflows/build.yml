@@ -1,4 +1,4 @@
-name: NKPlayer - Revert Playback Fix (v1.0.27)
+name: NKPlayer - Final Playback & Permission Fix (v1.0.28)
 on: [push]
 
 jobs:
@@ -17,9 +17,9 @@ jobs:
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # App Label and Target SDK 36 (Android 16 Compatible)
+          # App Label and Target SDK 35 (Stable Android 15 Support)
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
-          sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
+          sed -i 's/targetSdkVersion .*/targetSdkVersion 35/' android/app/build.gradle || true
           
           # Force Jetifier & AndroidX settings
           echo "android.useAndroidX=true" >> android/gradle.properties
@@ -28,7 +28,7 @@ jobs:
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.27+117
+          version: 1.0.28+118
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -45,17 +45,17 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Injecting Permissions, Background Service and Storage Fix
+          # Critical Permissions for Audio and Scoped Storage
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
           
-          perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>
-              <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>
-              <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>
+          perms = '''    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />
+              <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />
               <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
+              <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\" />
               <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />
               <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />
               <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK\" />\n'''
@@ -116,6 +116,7 @@ jobs:
                 theme: ThemeData.dark().copyWith(
                   primaryColor: Colors.blueAccent,
                   scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+                  appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF0F0F0F), elevation: 0),
                 ),
                 home: const PermissionHandlerScreen(),
               );
@@ -138,12 +139,10 @@ jobs:
             Future<void> _checkPermissions() async {
               if (Platform.isAndroid) {
                 final info = await DeviceInfoPlugin().androidInfo;
-                if (info.version.sdkInt >= 30) {
+                if (info.version.sdkInt >= 33) {
+                  await [Permission.audio, Permission.notification].request();
+                } else if (info.version.sdkInt >= 30) {
                   await Permission.manageExternalStorage.request();
-                  if (info.version.sdkInt >= 33) {
-                    await Permission.audio.request();
-                    await Permission.notification.request();
-                  }
                 } else {
                   await Permission.storage.request();
                 }
@@ -152,7 +151,7 @@ jobs:
             }
 
             @override
-            Widget build(BuildContext context) => const Scaffold(body: Center(child: CircularProgressIndicator()));
+            Widget build(BuildContext context) => const Scaffold(body: Center(child: CircularProgressIndicator(color: Colors.blueAccent)));
           }
 
           class CustomFolder {
@@ -208,33 +207,14 @@ jobs:
                       ? TextField(
                           controller: _searchCtrl,
                           autofocus: true,
-                          decoration: InputDecoration(
-                            hintText: "Search all songs...",
-                            border: InputBorder.none,
-                            suffixIcon: _searchCtrl.text.isNotEmpty
-                                ? Semantics(
-                                    label: "clear search button",
-                                    button: true,
-                                    container: true,
-                                    excludeSemantics: true,
-                                    child: IconButton(icon: const Icon(Icons.clear), onPressed: () => _searchCtrl.clear()),
-                                  )
-                                : null,
-                          ),
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(hintText: "Search songs...", border: InputBorder.none, hintStyle: TextStyle(color: Colors.grey)),
                         )
-                      : Text("Folders", style: GoogleFonts.poppins()),
+                      : Text("NKPlayer Folders", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                   actions: [
-                    Semantics(
-                      label: _isSearching ? "close search button" : "search button",
-                      button: true,
-                      excludeSemantics: true,
-                      child: IconButton(
-                        icon: Icon(_isSearching ? Icons.close : Icons.search),
-                        onPressed: () => setState(() {
-                          _isSearching = !_isSearching;
-                          if (!_isSearching) _searchCtrl.clear();
-                        }),
-                      ),
+                    IconButton(
+                      icon: Icon(_isSearching ? Icons.close : Icons.search),
+                      onPressed: () => setState(() { _isSearching = !_isSearching; if (!_isSearching) _searchCtrl.clear(); }),
                     )
                   ],
                 ),
@@ -245,7 +225,7 @@ jobs:
                             itemCount: _filteredSongs.length,
                             itemBuilder: (context, i) => ListTile(
                               leading: const Icon(Icons.music_note, color: Colors.blueAccent),
-                              title: Text(_filteredSongs[i].title, maxLines: 1),
+                              title: Text(_filteredSongs[i].title, maxLines: 1, overflow: TextOverflow.ellipsis),
                               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filteredSongs, initialIndex: i))),
                             ),
                           )
@@ -254,9 +234,9 @@ jobs:
                             itemBuilder: (context, i) {
                               final f = _folders[i];
                               return ListTile(
-                                leading: const Icon(Icons.folder, color: Colors.amber),
-                                title: Text(f.name),
-                                subtitle: Text("${f.songs.length} media files"),
+                                leading: const Icon(Icons.folder, color: Colors.amber, size: 35),
+                                title: Text(f.name, style: const TextStyle(fontWeight: FontWeight.w500)),
+                                subtitle: Text("${f.songs.length} songs"),
                                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: f))),
                               );
                             },
@@ -273,92 +253,19 @@ jobs:
           }
 
           class _SongListScreenState extends State<SongListScreen> {
-            final TextEditingController _searchCtrl = TextEditingController();
-            final Set<int> _selected = {};
-            bool _isSel = false;
-            List<SongModel> _filtered = [];
-
-            @override
-            void initState() {
-              super.initState();
-              _filtered = widget.folder.songs;
-              _searchCtrl.addListener(() {
-                setState(() {
-                  _filtered = widget.folder.songs.where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase())).toList();
-                });
-              });
-            }
-
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(
-                  leading: _isSel
-                      ? Semantics(
-                          label: "close selection button",
-                          button: true,
-                          excludeSemantics: true,
-                          child: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })),
-                        )
-                      : null,
-                  title: _isSel
-                      ? Text("${_selected.length} Selected")
-                      : TextField(
-                          controller: _searchCtrl,
-                          decoration: InputDecoration(
-                            hintText: "Search in folder...",
-                            border: InputBorder.none,
-                            suffixIcon: _searchCtrl.text.isNotEmpty
-                                ? Semantics(
-                                    label: "clear search button",
-                                    button: true,
-                                    container: true,
-                                    excludeSemantics: true,
-                                    child: IconButton(icon: const Icon(Icons.clear), onPressed: () => _searchCtrl.clear()),
-                                  )
-                                : null,
-                          ),
-                        ),
-                  actions: _isSel
-                      ? [
-                          Semantics(
-                            label: "select all button",
-                            button: true,
-                            excludeSemantics: true,
-                            child: IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
-                          ),
-                          Semantics(
-                            label: "play selected button",
-                            button: true,
-                            excludeSemantics: true,
-                            child: IconButton(
-                                icon: const Icon(Icons.play_circle),
-                                onPressed: () {
-                                  Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _selected.map((i) => _filtered[i]).toList(), initialIndex: 0)));
-                                }),
-                          ),
-                        ]
-                      : null,
-                ),
+                appBar: AppBar(title: Text(widget.folder.name)),
                 body: ListView.builder(
-                  itemCount: _filtered.length,
+                  itemCount: widget.folder.songs.length,
                   itemBuilder: (context, i) {
-                    final isS = _selected.contains(i);
+                    final song = widget.folder.songs[i];
                     return ListTile(
-                      tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
-                      leading: Icon(isS ? Icons.check_circle : Icons.music_note, color: isS ? Colors.blueAccent : Colors.grey),
-                      title: Text(_filtered[i].title, maxLines: 1),
-                      onLongPress: () => setState(() { _selected.add(i); _isSel = true; }),
-                      onTap: () {
-                        if (_isSel)
-                          setState(() {
-                            if (isS) _selected.remove(i);
-                            else _selected.add(i);
-                            _isSel = _selected.isNotEmpty;
-                          });
-                        else
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filtered, initialIndex: i)));
-                      },
+                      leading: const Icon(Icons.music_note, color: Colors.blueAccent),
+                      title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(song.artist ?? "Unknown Artist", maxLines: 1),
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: widget.folder.songs, initialIndex: i))),
                     );
                   },
                 ),
@@ -378,34 +285,35 @@ jobs:
             @override
             void initState() {
               super.initState();
-              PlayerManager.currentPlaylist = widget.songs;
-              _setupPlaylist();
+              _initPlayer();
             }
 
-            void _setupPlaylist() async {
+            // FIX: Smart initialization to prevent loading lag and 00:00 bug
+            Future<void> _initPlayer() async {
               try {
+                // If same playlist is already loaded, just seek. Don't re-load everything.
+                if (PlayerManager.currentPlaylist.length == widget.songs.length && 
+                    PlayerManager.player.currentIndex == widget.initialIndex &&
+                    PlayerManager.player.playing) {
+                  return;
+                }
+
+                PlayerManager.currentPlaylist = widget.songs;
                 final playlist = ConcatenatingAudioSource(
-                  children: PlayerManager.currentPlaylist.map((s) {
-                    // FIX: Reverted to the stable and perfectly working logic from v1.0.20
-                    return AudioSource.uri(
-                      Uri.parse(s.uri!),
-                      tag: MediaItem(
-                        id: s.id.toString(),
-                        title: s.title,
-                        artist: s.artist ?? "Unknown Artist",
-                        album: s.album,
-                      ),
-                    );
-                  }).toList(),
+                  children: widget.songs.map((s) => AudioSource.uri(
+                    Uri.parse(s.uri!),
+                    tag: MediaItem(id: s.id.toString(), title: s.title, artist: s.artist, album: s.album),
+                  )).toList(),
                 );
+
                 await PlayerManager.player.setAudioSource(playlist, initialIndex: widget.initialIndex);
                 PlayerManager.player.play();
               } catch (e) {
-                debugPrint("Playback Error: \$e");
+                debugPrint("Playback Error: $e");
               }
             }
 
-            String _fmt(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
+            String _formatDuration(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
 
             @override
             Widget build(BuildContext context) {
@@ -416,72 +324,70 @@ jobs:
                   builder: (context, snapshot) {
                     final state = snapshot.data;
                     if (state == null) return const Center(child: CircularProgressIndicator());
-                    final metadata = state.currentSource!.tag as MediaItem;
-                    return Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
-                        const SizedBox(height: 30),
-                        Text(metadata.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                        Text(metadata.artist ?? "Unknown Artist", style: const TextStyle(color: Colors.grey)),
-                        StreamBuilder<Duration>(
-                          stream: PlayerManager.player.positionStream,
-                          builder: (context, snap) {
-                            final pos = snap.data ?? Duration.zero;
-                            final dur = PlayerManager.player.duration ?? Duration.zero;
-                            return Column(
-                              children: [
-                                Slider(
-                                  value: pos.inSeconds.toDouble(),
-                                  max: dur.inSeconds.toDouble() > 0 ? dur.inSeconds.toDouble() : 1.0,
-                                  onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt())),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [Text(_fmt(pos)), Text(_fmt(dur))],
+                    final meta = state.currentSource!.tag as MediaItem;
+
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            height: 250, width: 250,
+                            decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+                            child: const Icon(Icons.music_note, size: 120, color: Colors.blueAccent),
+                          ),
+                          const SizedBox(height: 40),
+                          Text(meta.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold), maxLines: 2),
+                          const SizedBox(height: 8),
+                          Text(meta.artist ?? "Unknown Artist", style: const TextStyle(color: Colors.grey, fontSize: 16)),
+                          const SizedBox(height: 30),
+                          StreamBuilder<Duration>(
+                            stream: PlayerManager.player.positionStream,
+                            builder: (context, posSnap) {
+                              final pos = posSnap.data ?? Duration.zero;
+                              final dur = PlayerManager.player.duration ?? Duration.zero;
+                              return Column(
+                                children: [
+                                  Slider(
+                                    activeColor: Colors.blueAccent,
+                                    inactiveColor: Colors.grey.withOpacity(0.3),
+                                    value: pos.inSeconds.toDouble(),
+                                    max: dur.inSeconds.toDouble() > 0 ? dur.inSeconds.toDouble() : 1.0,
+                                    onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt())),
                                   ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 20),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            Semantics(
-                              label: "previous button",
-                              button: true,
-                              excludeSemantics: true,
-                              child: IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: PlayerManager.player.seekToPrevious),
-                            ),
-                            StreamBuilder<PlayerState>(
-                              stream: PlayerManager.player.playerStateStream,
-                              builder: (context, snap) {
-                                final playing = snap.data?.playing ?? false;
-                                return Semantics(
-                                  label: playing ? "pause button" : "play button",
-                                  button: true,
-                                  excludeSemantics: true,
-                                  child: FloatingActionButton.large(
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [Text(_formatDuration(pos)), Text(_formatDuration(dur))],
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 40),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: () => PlayerManager.player.seekToPrevious()),
+                              StreamBuilder<PlayerState>(
+                                stream: PlayerManager.player.playerStateStream,
+                                builder: (context, psSnap) {
+                                  final playing = psSnap.data?.playing ?? false;
+                                  final processing = psSnap.data?.processingState;
+                                  if (processing == ProcessingState.buffering || processing == ProcessingState.loading) {
+                                    return const CircularProgressIndicator();
+                                  }
+                                  return FloatingActionButton.large(
                                     backgroundColor: Colors.blueAccent,
                                     onPressed: playing ? PlayerManager.player.pause : PlayerManager.player.play,
-                                    child: Icon(playing ? Icons.pause : Icons.play_arrow, size: 50),
-                                  ),
-                                );
-                              },
-                            ),
-                            Semantics(
-                              label: "next button",
-                              button: true,
-                              excludeSemantics: true,
-                              child: IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: PlayerManager.player.seekToNext),
-                            ),
-                          ],
-                        ),
-                      ],
+                                    child: Icon(playing ? Icons.pause : Icons.play_arrow, size: 50, color: Colors.white),
+                                  );
+                                },
+                              ),
+                              IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: () => PlayerManager.player.seekToNext()),
+                            ],
+                          ),
+                        ],
+                      ),
                     );
                   },
                 ),
@@ -498,5 +404,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.27
+          name: NKPlayer-v1.0.28
           path: build/app/outputs/flutter-apk/app-release.apk
