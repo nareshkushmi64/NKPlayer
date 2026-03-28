@@ -26,8 +26,14 @@ jobs:
           path = 'android/app/build.gradle'
           with open(path, 'r') as f:
               content = f.read()
-          dep = '''    implementation 'androidx.media:media:1.7.0'
-              implementation 'androidx.core:core-ktx:1.12.0'\n'''
+          dep = '''    implementation('androidx.media:media:1.7.0') {
+                  exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+                  exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+              }
+              implementation('androidx.core:core-ktx:1.12.0') {
+                  exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+                  exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+              }\n'''
           content = content.replace('dependencies {', 'dependencies {\n' + dep)
           with open(path, 'w') as f:
               f.write(content)
