@@ -217,8 +217,8 @@ jobs:
               config: const AudioServiceConfig(
                 androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel',
                 androidNotificationChannelName: 'NKPlayer',
-                androidNotificationOngoing: true,          // keeps notification alive
-                androidStopForegroundOnPause: false,       // keep foreground even when paused
+                androidNotificationOngoing: false,
+                androidStopForegroundOnPause: false,
                 notificationColor: Colors.blueAccent,
                 androidNotificationIcon: 'mipmap/ic_launcher',
               ),
