@@ -1,4 +1,4 @@
-name: NKPlayer - Background & Notification (v1.0.21)
+name: NKPlayer - Bug Fix & Background Play (v1.0.22)
 on: [push]
 
 jobs:
@@ -21,10 +21,14 @@ jobs:
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           
+          # Fix Jetifier Warnings in gradle.properties
+          echo "android.useAndroidX=true" >> android/gradle.properties
+          echo "android.enableJetifier=true" >> android/gradle.properties
+
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.21+111
+          version: 1.0.22+112
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -388,7 +392,7 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                app_bar: AppBar(title: const Text("Now Playing")),
+                appBar: AppBar(title: const Text("Now Playing")),
                 body: StreamBuilder<SequenceState?>(
                   stream: PlayerManager.player.sequenceStateStream,
                   builder: (context, snapshot) {
@@ -476,5 +480,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.21
+          name: NKPlayer-v1.0.22
           path: build/app/outputs/flutter-apk/app-release.apk
