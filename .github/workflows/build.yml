@@ -21,6 +21,18 @@ jobs:
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle || true
 
+          # Add androidx.media dependency for MediaSessionCompat, MediaStyle etc.
+          python3 -c "
+          path = 'android/app/build.gradle'
+          with open(path, 'r') as f:
+              content = f.read()
+          dep = '''    implementation 'androidx.media:media:1.7.0'
+              implementation 'androidx.core:core-ktx:1.12.0'\n'''
+          content = content.replace('dependencies {', 'dependencies {\n' + dep)
+          with open(path, 'w') as f:
+              f.write(content)
+          "
+
           # ── pubspec.yaml ──────────────────────────────────────────────────────
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
@@ -101,13 +113,11 @@ jobs:
 
           import android.app.*
           import android.content.Intent
-          import android.graphics.BitmapFactory
-          import android.media.AudioManager
           import android.os.Build
           import android.os.IBinder
+          import android.support.v4.media.MediaMetadataCompat
           import android.support.v4.media.session.MediaSessionCompat
           import android.support.v4.media.session.PlaybackStateCompat
-          import android.support.v4.media.MediaMetadataCompat
           import androidx.core.app.NotificationCompat
           import androidx.media.app.NotificationCompat.MediaStyle
 
