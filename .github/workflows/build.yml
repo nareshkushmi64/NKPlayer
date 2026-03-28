@@ -19,6 +19,7 @@ jobs:
 
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
+          sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle || true
 
           # ── pubspec.yaml ──────────────────────────────────────────────────────
           cat <<'PUBSPEC' > pubspec.yaml
