@@ -1,4 +1,4 @@
-name: NKPlayer - Blank Screen Fix (v1.0.23)
+name: NKPlayer - Audio Playback Fix (v1.0.24)
 on: [push]
 
 jobs:
@@ -21,14 +21,14 @@ jobs:
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           
-          # Fix Jetifier
+          # Fix Jetifier for older media libraries
           echo "android.useAndroidX=true" >> android/gradle.properties
           echo "android.enableJetifier=true" >> android/gradle.properties
 
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.23+113
+          version: 1.0.24+114
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -45,7 +45,7 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Permissions and Background Service
+          # Background Service & Permissions Configuration
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
@@ -101,7 +101,7 @@ jobs:
                 androidShowNotificationBadge: true,
               );
             } catch (e) {
-              debugPrint("Init Error: $e");
+              debugPrint("Audio Init Error: $e");
             }
             runApp(const NKPlayerApp());
           }
@@ -148,12 +148,7 @@ jobs:
                   await Permission.storage.request();
                 }
               }
-              if (mounted) {
-                Navigator.pushReplacement(
-                  context, 
-                  MaterialPageRoute(builder: (_) => const FolderListScreen())
-                );
-              }
+              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderListScreen()));
             }
 
             @override
@@ -388,18 +383,27 @@ jobs:
             }
 
             void _setupPlaylist() async {
-              final playlist = ConcatenatingAudioSource(
-                children: PlayerManager.currentPlaylist.map((s) => AudioSource.uri(
-                  Uri.parse(s.data),
-                  tag: MediaItem(
-                    id: s.id.toString(),
-                    title: s.title,
-                    artist: s.artist ?? "Unknown Artist",
-                  ),
-                )).toList(),
-              );
-              await PlayerManager.player.setAudioSource(playlist, initialIndex: widget.initialIndex);
-              PlayerManager.player.play();
+              try {
+                final playlist = ConcatenatingAudioSource(
+                  children: PlayerManager.currentPlaylist.map((s) {
+                    // FIX: Ensure local paths have file:// prefix for just_audio
+                    final uri = s.data.startsWith('/') ? 'file://${s.data}' : s.data;
+                    return AudioSource.uri(
+                      Uri.parse(uri),
+                      tag: MediaItem(
+                        id: s.id.toString(),
+                        title: s.title,
+                        artist: s.artist ?? "Unknown Artist",
+                        album: s.album,
+                      ),
+                    );
+                  }).toList(),
+                );
+                await PlayerManager.player.setAudioSource(playlist, initialIndex: widget.initialIndex);
+                PlayerManager.player.play();
+              } catch (e) {
+                debugPrint("Playback Error: $e");
+              }
             }
 
             String _fmt(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
@@ -420,7 +424,7 @@ jobs:
                         const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
                         const SizedBox(height: 30),
                         Text(metadata.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                        Text(metadata.artist ?? "", style: const TextStyle(color: Colors.grey)),
+                        Text(metadata.artist ?? "Unknown Artist", style: const TextStyle(color: Colors.grey)),
                         StreamBuilder<Duration>(
                           stream: PlayerManager.player.positionStream,
                           builder: (context, snap) {
@@ -495,5 +499,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.23
+          name: NKPlayer-v1.0.24
           path: build/app/outputs/flutter-apk/app-release.apk
