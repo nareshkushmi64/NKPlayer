@@ -21,39 +21,20 @@ jobs:
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle || true
 
-          # Add androidx.media dependency + fix kotlin version + fix stdlib duplicate
-          python3 -c "
-          # 1. app/build.gradle: add media dependency
-          path = 'android/app/build.gradle'
-          with open(path, 'r') as f:
-              content = f.read()
-          dep = '''    implementation 'androidx.media:media:1.7.0'
-              implementation 'androidx.core:core-ktx:1.12.0'\n'''
-          content = content.replace('dependencies {', 'dependencies {\n' + dep)
-          with open(path, 'w') as f:
-              f.write(content)
+          sed -i "s/ext.kotlin_version = .*/ext.kotlin_version = '1.8.22'/" android/build.gradle || true
 
-          # 2. root build.gradle: upgrade kotlin_version + force stdlib version
-          root_path = 'android/build.gradle'
-          with open(root_path, 'r') as f:
-              root = f.read()
-          # Upgrade Kotlin version to 1.8.22
-          import re
-          root = re.sub(r\"ext\.kotlin_version\s*=\s*['\\\"][^'\\\"]+['\\\"]\", \"ext.kotlin_version = '1.8.22'\", root)
-          resolution = '''
-          subprojects {
-              configurations.all {
-                  resolutionStrategy {
-                      force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
-                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
-                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
-                  }
-              }
-          }\n'''
-          if 'resolutionStrategy' not in root:
-              root = root + resolution
-          with open(root_path, 'w') as f:
-              f.write(root)
+          # Add androidx.media + fix stdlib conflict
+          python3 -c "
+          path = 'android/app/build.gradle'
+          with open(path, 'r') as f: c = f.read()
+          dep = \"    implementation 'androidx.media:media:1.7.0'\\n    implementation 'androidx.core:core-ktx:1.12.0'\\n\"
+          c = c.replace('dependencies {', 'dependencies {\\n' + dep)
+          with open(path, 'w') as f: f.write(c)
+          rp = 'android/build.gradle'
+          with open(rp, 'r') as f: r = f.read()
+          res = \"\\nsubprojects {\\n    configurations.all {\\n        resolutionStrategy {\\n            force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'\\n            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'\\n            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'\\n        }\\n    }\\n}\\n\"
+          r = r + res if 'resolutionStrategy' not in r else r
+          with open(rp, 'w') as f: f.write(r)
           "
 
           # ── pubspec.yaml ──────────────────────────────────────────────────────
