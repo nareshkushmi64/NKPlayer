@@ -59,7 +59,16 @@ jobs:
               <service
                   android:name=\".MusicService\"
                   android:foregroundServiceType=\"mediaPlayback\"
-                  android:exported=\"false\" />\n'''
+                  android:stopWithTask=\"false\"
+                  android:exported=\"false\" />\n
+              <receiver android:name=\".MusicReceiver\" android:exported=\"false\">
+                  <intent-filter>
+                      <action android:name=\"com.nareshkushmi.nkplayer.PREV\" />
+                      <action android:name=\"com.nareshkushmi.nkplayer.PLAY_PAUSE\" />
+                      <action android:name=\"com.nareshkushmi.nkplayer.NEXT\" />
+                      <action android:name=\"com.nareshkushmi.nkplayer.STOP\" />
+                  </intent-filter>
+              </receiver>\n'''
 
           content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\"')
           content = content.replace('</application>', service + '    </application>')
@@ -67,33 +76,74 @@ jobs:
               f.write(content)
           "
 
-          # ── MusicService.kt (Native Android Foreground Service) ───────────────
           mkdir -p android/app/src/main/kotlin/com/nareshkushmi/nkplayer
+
+          # ── MusicReceiver.kt ──────────────────────────────────────────────────
+          cat <<'KT' > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MusicReceiver.kt
+          package com.nareshkushmi.nkplayer
+
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+
+          class MusicReceiver : BroadcastReceiver() {
+              override fun onReceive(context: Context, intent: Intent) {
+                  val serviceIntent = Intent(context, MusicService::class.java)
+                  serviceIntent.action = intent.action
+                  context.startService(serviceIntent)
+              }
+          }
+          KT
+
+          # ── MusicService.kt ───────────────────────────────────────────────────
           cat <<'KT' > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MusicService.kt
           package com.nareshkushmi.nkplayer
 
           import android.app.*
           import android.content.Intent
+          import android.graphics.BitmapFactory
+          import android.media.AudioManager
           import android.os.Build
           import android.os.IBinder
+          import android.support.v4.media.session.MediaSessionCompat
+          import android.support.v4.media.session.PlaybackStateCompat
+          import android.support.v4.media.MediaMetadataCompat
           import androidx.core.app.NotificationCompat
+          import androidx.media.app.NotificationCompat.MediaStyle
 
           class MusicService : Service() {
 
               companion object {
-                  const val CHANNEL_ID = "nkplayer_channel"
-                  const val NOTIFICATION_ID = 1
-                  const val ACTION_START = "ACTION_START"
-                  const val ACTION_STOP = "ACTION_STOP"
-                  const val EXTRA_TITLE = "song_title"
-                  const val EXTRA_ARTIST = "song_artist"
+                  const val CHANNEL_ID    = "nkplayer_channel"
+                  const val NOTIF_ID      = 1
+                  const val ACTION_PREV        = "com.nareshkushmi.nkplayer.PREV"
+                  const val ACTION_PLAY_PAUSE  = "com.nareshkushmi.nkplayer.PLAY_PAUSE"
+                  const val ACTION_NEXT        = "com.nareshkushmi.nkplayer.NEXT"
+                  const val ACTION_STOP        = "com.nareshkushmi.nkplayer.STOP"
+                  const val ACTION_UPDATE      = "com.nareshkushmi.nkplayer.UPDATE"
+                  const val EXTRA_TITLE        = "title"
+                  const val EXTRA_ARTIST       = "artist"
+                  const val EXTRA_IS_PLAYING   = "is_playing"
+
+                  // Flutter MethodChannel can update these
+                  var onPrev:      (() -> Unit)? = null
+                  var onPlayPause: (() -> Unit)? = null
+                  var onNext:      (() -> Unit)? = null
               }
+
+              private lateinit var mediaSession: MediaSessionCompat
+              private var songTitle  = "NKPlayer"
+              private var songArtist = "Unknown"
+              private var isPlaying  = true
 
               override fun onBind(intent: Intent?): IBinder? = null
 
               override fun onCreate() {
                   super.onCreate()
                   createNotificationChannel()
+                  mediaSession = MediaSessionCompat(this, "NKPlayer").apply {
+                      isActive = true
+                  }
               }
 
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -103,38 +153,116 @@ jobs:
                           stopSelf()
                           return START_NOT_STICKY
                       }
-                      else -> {
-                          val title = intent?.getStringExtra(EXTRA_TITLE) ?: "NKPlayer"
-                          val artist = intent?.getStringExtra(EXTRA_ARTIST) ?: "Unknown"
-                          startForeground(NOTIFICATION_ID, buildNotification(title, artist))
+                      ACTION_PREV       -> onPrev?.invoke()
+                      ACTION_PLAY_PAUSE -> onPlayPause?.invoke()
+                      ACTION_NEXT       -> onNext?.invoke()
+                      ACTION_UPDATE, null -> {
+                          songTitle  = intent?.getStringExtra(EXTRA_TITLE)     ?: songTitle
+                          songArtist = intent?.getStringExtra(EXTRA_ARTIST)    ?: songArtist
+                          isPlaying  = intent?.getBooleanExtra(EXTRA_IS_PLAYING, true) ?: isPlaying
+                          updateMediaSession()
+                          startForeground(NOTIF_ID, buildNotification())
                       }
+                  }
+                  // Always refresh notification after any action
+                  if (intent?.action in listOf(ACTION_PREV, ACTION_PLAY_PAUSE, ACTION_NEXT)) {
+                      startForeground(NOTIF_ID, buildNotification())
                   }
                   return START_STICKY
               }
 
-              private fun buildNotification(title: String, artist: String): Notification {
+              private fun updateMediaSession() {
+                  val metadata = MediaMetadataCompat.Builder()
+                      .putString(MediaMetadataCompat.METADATA_KEY_TITLE, songTitle)
+                      .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, songArtist)
+                      .build()
+                  mediaSession.setMetadata(metadata)
+
+                  val state = PlaybackStateCompat.Builder()
+                      .setActions(
+                          PlaybackStateCompat.ACTION_PLAY or
+                          PlaybackStateCompat.ACTION_PAUSE or
+                          PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                          PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+                      )
+                      .setState(
+                          if (isPlaying) PlaybackStateCompat.STATE_PLAYING
+                          else PlaybackStateCompat.STATE_PAUSED,
+                          PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN,
+                          1f
+                      )
+                      .build()
+                  mediaSession.setPlaybackState(state)
+              }
+
+              private fun buildNotification(): Notification {
+                  val prevIntent = PendingIntent.getBroadcast(
+                      this, 0,
+                      Intent(ACTION_PREV).setPackage(packageName),
+                      PendingIntent.FLAG_IMMUTABLE
+                  )
+                  val playPauseIntent = PendingIntent.getBroadcast(
+                      this, 1,
+                      Intent(ACTION_PLAY_PAUSE).setPackage(packageName),
+                      PendingIntent.FLAG_IMMUTABLE
+                  )
+                  val nextIntent = PendingIntent.getBroadcast(
+                      this, 2,
+                      Intent(ACTION_NEXT).setPackage(packageName),
+                      PendingIntent.FLAG_IMMUTABLE
+                  )
+                  val stopIntent = PendingIntent.getBroadcast(
+                      this, 3,
+                      Intent(ACTION_STOP).setPackage(packageName),
+                      PendingIntent.FLAG_IMMUTABLE
+                  )
+
+                  val playPauseIcon = if (isPlaying)
+                      android.R.drawable.ic_media_pause
+                  else
+                      android.R.drawable.ic_media_play
+
                   return NotificationCompat.Builder(this, CHANNEL_ID)
-                      .setContentTitle(title)
-                      .setContentText(artist)
+                      .setContentTitle(songTitle)
+                      .setContentText(songArtist)
                       .setSmallIcon(android.R.drawable.ic_media_play)
-                      .setOngoing(true)
+                      .setOngoing(isPlaying)
+                      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                       .setPriority(NotificationCompat.PRIORITY_LOW)
+                      .addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent)
+                      .addAction(playPauseIcon, if (isPlaying) "Pause" else "Play", playPauseIntent)
+                      .addAction(android.R.drawable.ic_media_next, "Next", nextIntent)
+                      .addAction(android.R.drawable.ic_delete, "Stop", stopIntent)
+                      .setStyle(
+                          MediaStyle()
+                              .setMediaSession(mediaSession.sessionToken)
+                              .setShowActionsInCompactView(0, 1, 2)
+                      )
                       .build()
               }
 
               private fun createNotificationChannel() {
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                       val channel = NotificationChannel(
-                          CHANNEL_ID,
-                          "NKPlayer",
-                          NotificationManager.IMPORTANCE_LOW
+                          CHANNEL_ID, "NKPlayer", NotificationManager.IMPORTANCE_LOW
                       ).apply {
                           description = "NKPlayer music playback"
                           setSound(null, null)
                       }
-                      val manager = getSystemService(NotificationManager::class.java)
-                      manager.createNotificationChannel(channel)
+                      getSystemService(NotificationManager::class.java)
+                          .createNotificationChannel(channel)
                   }
+              }
+
+              // Called when app is swiped from recents — keep playing!
+              override fun onTaskRemoved(rootIntent: Intent?) {
+                  super.onTaskRemoved(rootIntent)
+                  // Do NOT stop — music keeps playing in background
+              }
+
+              override fun onDestroy() {
+                  mediaSession.release()
+                  super.onDestroy()
               }
           }
           KT
@@ -151,52 +279,71 @@ jobs:
 
           class MainActivity : FlutterActivity() {
               private val CHANNEL = "com.nareshkushmi.nkplayer/music_service"
+              private var methodChannel: MethodChannel? = null
 
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
-                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-                      .setMethodCallHandler { call, result ->
-                          when (call.method) {
-                              "startService" -> {
-                                  val title = call.argument<String>("title") ?: ""
-                                  val artist = call.argument<String>("artist") ?: ""
-                                  val intent = Intent(this, MusicService::class.java).apply {
-                                      action = MusicService.ACTION_START
-                                      putExtra(MusicService.EXTRA_TITLE, title)
-                                      putExtra(MusicService.EXTRA_ARTIST, artist)
-                                  }
-                                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                      startForegroundService(intent)
-                                  } else {
-                                      startService(intent)
-                                  }
-                                  result.success(null)
-                              }
-                              "stopService" -> {
-                                  val intent = Intent(this, MusicService::class.java).apply {
-                                      action = MusicService.ACTION_STOP
-                                  }
-                                  startService(intent)
-                                  result.success(null)
-                              }
-                              "updateNotification" -> {
-                                  val title = call.argument<String>("title") ?: ""
-                                  val artist = call.argument<String>("artist") ?: ""
-                                  val intent = Intent(this, MusicService::class.java).apply {
-                                      action = MusicService.ACTION_START
-                                      putExtra(MusicService.EXTRA_TITLE, title)
-                                      putExtra(MusicService.EXTRA_ARTIST, artist)
-                                  }
-                                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                      startForegroundService(intent)
-                                  } else {
-                                      startService(intent)
-                                  }
-                                  result.success(null)
-                              }
-                              else -> result.notImplemented()
-                          }
+
+                  methodChannel = MethodChannel(
+                      flutterEngine.dartExecutor.binaryMessenger, CHANNEL
+                  )
+
+                  // Register notification button callbacks → send to Flutter
+                  MusicService.onPrev = {
+                      runOnUiThread {
+                          methodChannel?.invokeMethod("onPrev", null)
                       }
+                  }
+                  MusicService.onPlayPause = {
+                      runOnUiThread {
+                          methodChannel?.invokeMethod("onPlayPause", null)
+                      }
+                  }
+                  MusicService.onNext = {
+                      runOnUiThread {
+                          methodChannel?.invokeMethod("onNext", null)
+                      }
+                  }
+
+                  methodChannel?.setMethodCallHandler { call, result ->
+                      when (call.method) {
+                          "startService" -> {
+                              val intent = Intent(this, MusicService::class.java).apply {
+                                  action = MusicService.ACTION_UPDATE
+                                  putExtra(MusicService.EXTRA_TITLE,     call.argument("title") ?: "")
+                                  putExtra(MusicService.EXTRA_ARTIST,    call.argument("artist") ?: "")
+                                  putExtra(MusicService.EXTRA_IS_PLAYING, true)
+                              }
+                              startFgService(intent)
+                              result.success(null)
+                          }
+                          "updateService" -> {
+                              val intent = Intent(this, MusicService::class.java).apply {
+                                  action = MusicService.ACTION_UPDATE
+                                  putExtra(MusicService.EXTRA_TITLE,      call.argument("title") ?: "")
+                                  putExtra(MusicService.EXTRA_ARTIST,     call.argument("artist") ?: "")
+                                  putExtra(MusicService.EXTRA_IS_PLAYING, call.argument<Boolean>("isPlaying") ?: true)
+                              }
+                              startFgService(intent)
+                              result.success(null)
+                          }
+                          "stopService" -> {
+                              val intent = Intent(this, MusicService::class.java).apply {
+                                  action = MusicService.ACTION_STOP
+                              }
+                              startService(intent)
+                              result.success(null)
+                          }
+                          else -> result.notImplemented()
+                      }
+                  }
+              }
+
+              private fun startFgService(intent: Intent) {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                      startForegroundService(intent)
+                  else
+                      startService(intent)
               }
           }
           KT
@@ -213,40 +360,36 @@ jobs:
           import 'package:device_info_plus/device_info_plus.dart';
 
           // ─────────────────────────────────────────────────────────────────────
-          //  Music Service Bridge (Flutter ↔ Native Android)
+          //  Music Service Bridge
           // ─────────────────────────────────────────────────────────────────────
           class MusicServiceBridge {
-            static const _channel =
-                MethodChannel('com.nareshkushmi.nkplayer/music_service');
+            static const _ch = MethodChannel('com.nareshkushmi.nkplayer/music_service');
 
-            static Future<void> start(String title, String artist) async {
-              try {
-                await _channel.invokeMethod('startService', {
+            static Future<void> start(String title, String artist) =>
+                _ch.invokeMethod('startService', {'title': title, 'artist': artist});
+
+            static Future<void> update(String title, String artist, bool isPlaying) =>
+                _ch.invokeMethod('updateService', {
                   'title': title,
                   'artist': artist,
+                  'isPlaying': isPlaying,
                 });
-              } catch (e) {
-                debugPrint('MusicService start error: $e');
-              }
-            }
 
-            static Future<void> update(String title, String artist) async {
-              try {
-                await _channel.invokeMethod('updateNotification', {
-                  'title': title,
-                  'artist': artist,
-                });
-              } catch (e) {
-                debugPrint('MusicService update error: $e');
-              }
-            }
+            static Future<void> stop() => _ch.invokeMethod('stopService');
 
-            static Future<void> stop() async {
-              try {
-                await _channel.invokeMethod('stopService');
-              } catch (e) {
-                debugPrint('MusicService stop error: $e');
-              }
+            // Listen for notification button presses from native side
+            static void setCallbacks({
+              required VoidCallback onPrev,
+              required VoidCallback onPlayPause,
+              required VoidCallback onNext,
+            }) {
+              _ch.setMethodCallHandler((call) async {
+                switch (call.method) {
+                  case 'onPrev':      onPrev();      break;
+                  case 'onPlayPause': onPlayPause(); break;
+                  case 'onNext':      onNext();      break;
+                }
+              });
             }
           }
 
@@ -259,9 +402,6 @@ jobs:
             static int currentIndex = 0;
           }
 
-          // ─────────────────────────────────────────────────────────────────────
-          //  Main
-          // ─────────────────────────────────────────────────────────────────────
           void main() {
             WidgetsFlutterBinding.ensureInitialized();
             runApp(const NKPlayerApp());
@@ -270,17 +410,15 @@ jobs:
           class NKPlayerApp extends StatelessWidget {
             const NKPlayerApp({super.key});
             @override
-            Widget build(BuildContext context) {
-              return MaterialApp(
-                title: 'NKPlayer',
-                debugShowCheckedModeBanner: false,
-                theme: ThemeData.dark().copyWith(
-                  primaryColor: Colors.blueAccent,
-                  scaffoldBackgroundColor: const Color(0xFF0F0F0F),
-                ),
-                home: const PermissionHandlerScreen(),
-              );
-            }
+            Widget build(BuildContext context) => MaterialApp(
+                  title: 'NKPlayer',
+                  debugShowCheckedModeBanner: false,
+                  theme: ThemeData.dark().copyWith(
+                    primaryColor: Colors.blueAccent,
+                    scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+                  ),
+                  home: const PermissionHandlerScreen(),
+                );
           }
 
           // ─────────────────────────────────────────────────────────────────────
@@ -329,7 +467,7 @@ jobs:
           }
 
           // ─────────────────────────────────────────────────────────────────────
-          //  Data Model
+          //  Folder Model
           // ─────────────────────────────────────────────────────────────────────
           class CustomFolder {
             final String name;
@@ -358,15 +496,13 @@ jobs:
             void initState() {
               super.initState();
               _loadData();
-              _searchCtrl.addListener(() {
-                setState(() {
-                  _filteredSongs = _allSongs
-                      .where((s) => s.title
-                          .toLowerCase()
-                          .contains(_searchCtrl.text.toLowerCase()))
-                      .toList();
-                });
-              });
+              _searchCtrl.addListener(() => setState(() {
+                    _filteredSongs = _allSongs
+                        .where((s) => s.title
+                            .toLowerCase()
+                            .contains(_searchCtrl.text.toLowerCase()))
+                        .toList();
+                  }));
             }
 
             Future<void> _loadData() async {
@@ -379,8 +515,8 @@ jobs:
               setState(() {
                 _allSongs = songs;
                 _folders = paths.entries
-                    .map((e) => CustomFolder(
-                        name: e.key.split('/').last, songs: e.value))
+                    .map((e) =>
+                        CustomFolder(name: e.key.split('/').last, songs: e.value))
                     .toList();
                 _loading = false;
               });
@@ -398,30 +534,20 @@ jobs:
                             hintText: 'Search all songs...',
                             border: InputBorder.none,
                             suffixIcon: _searchCtrl.text.isNotEmpty
-                                ? Semantics(
-                                    label: 'clear search button',
-                                    button: true,
-                                    excludeSemantics: true,
-                                    child: IconButton(
-                                        icon: const Icon(Icons.clear),
-                                        onPressed: () => _searchCtrl.clear()),
-                                  )
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () => _searchCtrl.clear())
                                 : null,
                           ),
                         )
                       : Text('Folders', style: GoogleFonts.poppins()),
                   actions: [
-                    Semantics(
-                      label: _isSearching ? 'close search button' : 'search button',
-                      button: true,
-                      excludeSemantics: true,
-                      child: IconButton(
-                        icon: Icon(_isSearching ? Icons.close : Icons.search),
-                        onPressed: () => setState(() {
-                          _isSearching = !_isSearching;
-                          if (!_isSearching) _searchCtrl.clear();
-                        }),
-                      ),
+                    IconButton(
+                      icon: Icon(_isSearching ? Icons.close : Icons.search),
+                      onPressed: () => setState(() {
+                        _isSearching = !_isSearching;
+                        if (!_isSearching) _searchCtrl.clear();
+                      }),
                     ),
                   ],
                 ),
@@ -438,8 +564,7 @@ jobs:
                                   context,
                                   MaterialPageRoute(
                                       builder: (_) => PlayerScreen(
-                                          songs: _filteredSongs,
-                                          initialIndex: i))),
+                                          songs: _filteredSongs, initialIndex: i))),
                             ),
                           )
                         : ListView.builder(
@@ -454,8 +579,7 @@ jobs:
                                 onTap: () => Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                        builder: (_) =>
-                                            SongListScreen(folder: f))),
+                                        builder: (_) => SongListScreen(folder: f))),
                               );
                             },
                           ),
@@ -483,15 +607,13 @@ jobs:
             void initState() {
               super.initState();
               _filtered = widget.folder.songs;
-              _searchCtrl.addListener(() {
-                setState(() {
-                  _filtered = widget.folder.songs
-                      .where((s) => s.title
-                          .toLowerCase()
-                          .contains(_searchCtrl.text.toLowerCase()))
-                      .toList();
-                });
-              });
+              _searchCtrl.addListener(() => setState(() {
+                    _filtered = widget.folder.songs
+                        .where((s) => s.title
+                            .toLowerCase()
+                            .contains(_searchCtrl.text.toLowerCase()))
+                        .toList();
+                  }));
             }
 
             @override
@@ -499,15 +621,10 @@ jobs:
               return Scaffold(
                 appBar: AppBar(
                   leading: _isSel
-                      ? Semantics(
-                          label: 'close selection button',
-                          button: true,
-                          excludeSemantics: true,
-                          child: IconButton(
-                              icon: const Icon(Icons.close),
-                              onPressed: () => setState(
-                                  () { _selected.clear(); _isSel = false; })),
-                        )
+                      ? IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () =>
+                              setState(() { _selected.clear(); _isSel = false; }))
                       : null,
                   title: _isSel
                       ? Text('${_selected.length} Selected')
@@ -517,43 +634,29 @@ jobs:
                             hintText: 'Search in folder...',
                             border: InputBorder.none,
                             suffixIcon: _searchCtrl.text.isNotEmpty
-                                ? Semantics(
-                                    label: 'clear search button',
-                                    button: true,
-                                    excludeSemantics: true,
-                                    child: IconButton(
-                                        icon: const Icon(Icons.clear),
-                                        onPressed: () => _searchCtrl.clear()),
-                                  )
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () => _searchCtrl.clear())
                                 : null,
                           ),
                         ),
                   actions: _isSel
                       ? [
-                          Semantics(
-                            label: 'select all button',
-                            button: true,
-                            excludeSemantics: true,
-                            child: IconButton(
-                                icon: const Icon(Icons.select_all),
-                                onPressed: () => setState(() => _selected
-                                    .addAll(Iterable.generate(_filtered.length)))),
+                          IconButton(
+                            icon: const Icon(Icons.select_all),
+                            onPressed: () => setState(() => _selected
+                                .addAll(Iterable.generate(_filtered.length))),
                           ),
-                          Semantics(
-                            label: 'play selected button',
-                            button: true,
-                            excludeSemantics: true,
-                            child: IconButton(
-                              icon: const Icon(Icons.play_circle),
-                              onPressed: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) => PlayerScreen(
-                                          songs: _selected
-                                              .map((i) => _filtered[i])
-                                              .toList(),
-                                          initialIndex: 0))),
-                            ),
+                          IconButton(
+                            icon: const Icon(Icons.play_circle),
+                            onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => PlayerScreen(
+                                        songs: _selected
+                                            .map((i) => _filtered[i])
+                                            .toList(),
+                                        initialIndex: 0))),
                           ),
                         ]
                       : null,
@@ -574,18 +677,15 @@ jobs:
                       onTap: () {
                         if (_isSel) {
                           setState(() {
-                            if (isS)
-                              _selected.remove(i);
-                            else
-                              _selected.add(i);
+                            if (isS) _selected.remove(i); else _selected.add(i);
                             _isSel = _selected.isNotEmpty;
                           });
                         } else {
                           Navigator.push(
                               context,
                               MaterialPageRoute(
-                                  builder: (_) => PlayerScreen(
-                                      songs: _filtered, initialIndex: i)));
+                                  builder: (_) =>
+                                      PlayerScreen(songs: _filtered, initialIndex: i)));
                         }
                       },
                     );
@@ -618,6 +718,13 @@ jobs:
               PlayerManager.playlist = widget.songs;
               PlayerManager.currentIndex = widget.initialIndex;
 
+              // Listen for notification button callbacks from native
+              MusicServiceBridge.setCallbacks(
+                onPrev:      _prev,
+                onPlayPause: _togglePlay,
+                onNext:      _next,
+              );
+
               PlayerManager.player.onPositionChanged
                   .listen((p) { if (mounted) setState(() => _pos = p); });
               PlayerManager.player.onDurationChanged
@@ -631,12 +738,9 @@ jobs:
               final song = PlayerManager.playlist[PlayerManager.currentIndex];
               try {
                 await PlayerManager.player.play(DeviceFileSource(song.data));
-                setState(() => _playing = true);
-                // Start native foreground service → notification shows, music keeps playing
+                if (mounted) setState(() => _playing = true);
                 await MusicServiceBridge.start(
-                  song.title,
-                  song.artist ?? 'Unknown Artist',
-                );
+                    song.title, song.artist ?? 'Unknown Artist');
               } catch (e) {
                 debugPrint('Playback error: $e');
               }
@@ -645,27 +749,32 @@ jobs:
             void _next() {
               if (PlayerManager.currentIndex < PlayerManager.playlist.length - 1) {
                 PlayerManager.currentIndex++;
+                if (mounted) setState(() {});
                 _playCurrent();
               } else {
                 MusicServiceBridge.stop();
-                setState(() => _playing = false);
+                if (mounted) setState(() => _playing = false);
               }
             }
 
             void _prev() {
               if (PlayerManager.currentIndex > 0) {
                 PlayerManager.currentIndex--;
+                if (mounted) setState(() {});
                 _playCurrent();
               }
             }
 
-            Future<void> _togglePlay() async {
+            void _togglePlay() async {
               if (_playing) {
                 await PlayerManager.player.pause();
               } else {
                 await PlayerManager.player.resume();
               }
-              setState(() => _playing = !_playing);
+              if (mounted) setState(() => _playing = !_playing);
+              final song = PlayerManager.playlist[PlayerManager.currentIndex];
+              await MusicServiceBridge.update(
+                  song.title, song.artist ?? 'Unknown Artist', !_playing);
             }
 
             String _fmt(Duration d) =>
@@ -694,7 +803,8 @@ jobs:
                     ),
                     const SizedBox(height: 8),
                     Text(song.artist ?? 'Unknown Artist',
-                        style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                        style:
+                            const TextStyle(color: Colors.grey, fontSize: 14)),
                     Slider(
                       value: _pos.inSeconds.toDouble().clamp(
                           0,
@@ -704,8 +814,8 @@ jobs:
                       max: _dur.inSeconds.toDouble() > 0
                           ? _dur.inSeconds.toDouble()
                           : 1.0,
-                      onChanged: (v) => PlayerManager.player
-                          .seek(Duration(seconds: v.toInt())),
+                      onChanged: (v) =>
+                          PlayerManager.player.seek(Duration(seconds: v.toInt())),
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -723,34 +833,19 @@ jobs:
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        Semantics(
-                          label: 'previous button',
-                          button: true,
-                          excludeSemantics: true,
-                          child: IconButton(
-                              icon: const Icon(Icons.skip_previous, size: 45),
-                              onPressed: _prev),
+                        IconButton(
+                            icon: const Icon(Icons.skip_previous, size: 45),
+                            onPressed: _prev),
+                        FloatingActionButton.large(
+                          backgroundColor: Colors.blueAccent,
+                          onPressed: _togglePlay,
+                          child: Icon(
+                              _playing ? Icons.pause : Icons.play_arrow,
+                              size: 50),
                         ),
-                        Semantics(
-                          label: _playing ? 'pause button' : 'play button',
-                          button: true,
-                          excludeSemantics: true,
-                          child: FloatingActionButton.large(
-                            backgroundColor: Colors.blueAccent,
-                            onPressed: _togglePlay,
-                            child: Icon(
-                                _playing ? Icons.pause : Icons.play_arrow,
-                                size: 50),
-                          ),
-                        ),
-                        Semantics(
-                          label: 'next button',
-                          button: true,
-                          excludeSemantics: true,
-                          child: IconButton(
-                              icon: const Icon(Icons.skip_next, size: 45),
-                              onPressed: _next),
-                        ),
+                        IconButton(
+                            icon: const Icon(Icons.skip_next, size: 45),
+                            onPressed: _next),
                       ],
                     ),
                   ],
