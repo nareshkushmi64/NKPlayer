@@ -1,4 +1,4 @@
-name: NKPlayer - Bug Fix & Background Play (v1.0.22)
+name: NKPlayer - Blank Screen Fix (v1.0.23)
 on: [push]
 
 jobs:
@@ -17,18 +17,18 @@ jobs:
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
           
-          # App Label and Target SDK 36 (Android 16 Compatible)
+          # App Label and Target SDK 36
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           
-          # Fix Jetifier Warnings in gradle.properties
+          # Fix Jetifier
           echo "android.useAndroidX=true" >> android/gradle.properties
           echo "android.enableJetifier=true" >> android/gradle.properties
 
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.22+112
+          version: 1.0.23+113
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -45,7 +45,7 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Injecting Permissions, Background Service and Legacy Storage Fix
+          # Permissions and Background Service
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
@@ -92,21 +92,34 @@ jobs:
           }
 
           Future<void> main() async {
-            WidgetsFlutterBinding.ensureInitialized();
-            await JustAudioBackground.init(
-              androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel.audio',
-              androidNotificationChannelName: 'NKPlayer Audio Playback',
-              androidNotificationOngoing: true,
-            );
-            runApp(MaterialApp(
-              title: 'NKPlayer',
-              debugShowCheckedModeBanner: false,
-              theme: ThemeData.dark().copyWith(
-                primaryColor: Colors.blueAccent,
-                scaffoldBackgroundColor: const Color(0xFF0F0F0F),
-              ),
-              home: const PermissionHandlerScreen(),
-            ));
+            try {
+              WidgetsFlutterBinding.ensureInitialized();
+              await JustAudioBackground.init(
+                androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel.audio',
+                androidNotificationChannelName: 'NKPlayer Audio Playback',
+                androidNotificationOngoing: true,
+                androidShowNotificationBadge: true,
+              );
+            } catch (e) {
+              debugPrint("Init Error: $e");
+            }
+            runApp(const NKPlayerApp());
+          }
+
+          class NKPlayerApp extends StatelessWidget {
+            const NKPlayerApp({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'NKPlayer',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData.dark().copyWith(
+                  primaryColor: Colors.blueAccent,
+                  scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+                ),
+                home: const PermissionHandlerScreen(),
+              );
+            }
           }
 
           class PermissionHandlerScreen extends StatefulWidget {
@@ -135,7 +148,12 @@ jobs:
                   await Permission.storage.request();
                 }
               }
-              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderListScreen()));
+              if (mounted) {
+                Navigator.pushReplacement(
+                  context, 
+                  MaterialPageRoute(builder: (_) => const FolderListScreen())
+                );
+              }
             }
 
             @override
@@ -362,12 +380,9 @@ jobs:
           }
 
           class _PlayerScreenState extends State<PlayerScreen> {
-            int _idx = 0;
-
             @override
             void initState() {
               super.initState();
-              _idx = widget.initialIndex;
               PlayerManager.currentPlaylist = widget.songs;
               _setupPlaylist();
             }
@@ -383,7 +398,7 @@ jobs:
                   ),
                 )).toList(),
               );
-              await PlayerManager.player.setAudioSource(playlist, initialIndex: _idx);
+              await PlayerManager.player.setAudioSource(playlist, initialIndex: widget.initialIndex);
               PlayerManager.player.play();
             }
 
@@ -480,5 +495,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.22
+          name: NKPlayer-v1.0.23
           path: build/app/outputs/flutter-apk/app-release.apk
