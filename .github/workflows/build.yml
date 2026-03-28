@@ -1,4 +1,4 @@
-name: NKPlayer - Android 16 Support (v1.0.51)
+name: NKPlayer - Background Playback (v1.0.52)
 on: [push]
 
 jobs:
@@ -16,22 +16,23 @@ jobs:
       - name: Generate NKPlayer Project
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
-          
-          # App Label and Target SDK 36 (Android 16 Compatible)
+
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
-          
+
+          # ── pubspec.yaml ──────────────────────────────────────────────────────
           cat <<EOF > pubspec.yaml
           name: nkplayer
-          description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.51+52
+          description: NKPlayer Pro - Accessible Media Player with Background Playback.
+          version: 1.0.52+53
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
           dependencies:
             flutter:
               sdk: flutter
-            audioplayers: ^5.2.1
+            audio_service: ^0.18.13
+            just_audio: ^0.9.36
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
@@ -40,47 +41,203 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Permissions for Android 10 to Android 16
+          # ── AndroidManifest.xml permissions + foreground service ─────────────
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
-          perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />
-              <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />
-              <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\" />
+
+          perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>
+              <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>
+              <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
-              <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n'''
+              <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />
+              <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />
+              <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK\" />\n'''
+
+          # foreground service declaration inside <application>
+          service = '''
+              <service
+                  android:name=\"com.ryanheise.audioservice.AudioServiceActivity\$AudioHandler\"
+                  android:exported=\"true\"
+                  android:foregroundServiceType=\"mediaPlayback\">
+                  <intent-filter>
+                      <action android:name=\"android.media.browse.MediaBrowserService\" />
+                  </intent-filter>
+              </service>
+              <receiver android:name=\"com.ryanheise.audioservice.MediaButtonReceiver\"
+                  android:exported=\"true\">
+                  <intent-filter>
+                      <action android:name=\"android.intent.action.MEDIA_BUTTON\" />
+                  </intent-filter>
+              </receiver>'''
+
           content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\"')
+          content = content.replace('</application>', service + '\n    </application>')
           with open(path, 'w') as f:
               f.write(content)
           "
 
-          cat <<'EOF' > lib/main.dart
+          # ── lib/main.dart ─────────────────────────────────────────────────────
+          cat <<'DART' > lib/main.dart
           import 'dart:io';
           import 'package:flutter/material.dart';
+          import 'package:audio_service/audio_service.dart';
+          import 'package:just_audio/just_audio.dart';
           import 'package:on_audio_query/on_audio_query.dart';
-          import 'package:audioplayers/audioplayers.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
 
-          class PlayerManager {
-            static final AudioPlayer player = AudioPlayer();
-            static List<SongModel> currentPlaylist = [];
-            static int currentIndex = 0;
+          // ─────────────────────────────────────────────────────────────────────
+          //  Audio Handler  (runs in a separate isolate → background-safe)
+          // ─────────────────────────────────────────────────────────────────────
+          class NKAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
+            final _player = AudioPlayer();
+
+            NKAudioHandler() {
+              // Forward player state → audio_service state so the notification updates
+              _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
+
+              // Auto-advance to next track when current one finishes
+              _player.processingStateStream.listen((state) {
+                if (state == ProcessingState.completed) skipToNext();
+              });
+            }
+
+            // Convert just_audio event → audio_service PlaybackState
+            PlaybackState _transformEvent(PlaybackEvent event) {
+              return PlaybackState(
+                controls: [
+                  MediaControl.skipToPrevious,
+                  _player.playing ? MediaControl.pause : MediaControl.play,
+                  MediaControl.skipToNext,
+                  MediaControl.stop,
+                ],
+                systemActions: const {
+                  MediaAction.seek,
+                  MediaAction.seekForward,
+                  MediaAction.seekBackward,
+                },
+                androidCompactActionIndices: const [0, 1, 2],
+                processingState: const {
+                  ProcessingState.idle:     AudioProcessingState.idle,
+                  ProcessingState.loading:  AudioProcessingState.loading,
+                  ProcessingState.buffering:AudioProcessingState.buffering,
+                  ProcessingState.ready:    AudioProcessingState.ready,
+                  ProcessingState.completed:AudioProcessingState.completed,
+                }[_player.processingState]!,
+                playing: _player.playing,
+                updatePosition: _player.position,
+                bufferedPosition: _player.bufferedPosition,
+                speed: _player.speed,
+                queueIndex: event.currentIndex,
+              );
+            }
+
+            // ── Playback controls ─────────────────────────────────────────────
+            @override
+            Future<void> play() => _player.play();
+
+            @override
+            Future<void> pause() => _player.pause();
+
+            @override
+            Future<void> stop() async {
+              await _player.stop();
+              await super.stop();
+            }
+
+            @override
+            Future<void> seek(Duration position) => _player.seek(position);
+
+            @override
+            Future<void> skipToNext() async {
+              if (queue.value.isEmpty) return;
+              final next = ((_player.currentIndex ?? 0) + 1) % queue.value.length;
+              await skipToQueueItem(next);
+            }
+
+            @override
+            Future<void> skipToPrevious() async {
+              if (queue.value.isEmpty) return;
+              final prev = ((_player.currentIndex ?? 0) - 1 + queue.value.length) % queue.value.length;
+              await skipToQueueItem(prev);
+            }
+
+            @override
+            Future<void> skipToQueueItem(int index) async {
+              if (index < 0 || index >= queue.value.length) return;
+              await _player.seek(Duration.zero, index: index);
+              await _player.play();
+              mediaItem.add(queue.value[index]);
+            }
+
+            // Load a list of songs into the player queue
+            Future<void> loadPlaylist(List<SongModel> songs, int startIndex) async {
+              final items = songs.map((s) => MediaItem(
+                id: s.data,
+                title: s.title,
+                artist: s.artist ?? 'Unknown',
+                album: s.album ?? '',
+                duration: Duration(milliseconds: s.duration ?? 0),
+              )).toList();
+
+              queue.add(items);
+              mediaItem.add(items[startIndex]);
+
+              await _player.setAudioSource(
+                ConcatenatingAudioSource(
+                  children: songs.map((s) => AudioSource.uri(Uri.file(s.data))).toList(),
+                ),
+                initialIndex: startIndex,
+              );
+              await _player.play();
+            }
+
+            // Expose streams so the UI can listen
+            Stream<Duration>  get positionStream   => _player.positionStream;
+            Stream<Duration?> get durationStream   => _player.durationStream;
+            Stream<bool>      get playingStream    => _player.playingStream;
+            int? get currentIndex                  => _player.currentIndex;
           }
 
-          void main() => runApp(MaterialApp(
-                title: 'NKPlayer',
-                debugShowCheckedModeBanner: false,
-                theme: ThemeData.dark().copyWith(
-                  primaryColor: Colors.blueAccent,
-                  scaffoldBackgroundColor: const Color(0xFF0F0F0F),
-                ),
-                home: const PermissionHandlerScreen(),
-              ));
+          // ─────────────────────────────────────────────────────────────────────
+          //  Global handler instance (created once in main)
+          // ─────────────────────────────────────────────────────────────────────
+          late NKAudioHandler audioHandler;
 
+          Future<void> main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+
+            // Register the handler with audio_service
+            audioHandler = await AudioService.init(
+              builder: () => NKAudioHandler(),
+              config: const AudioServiceConfig(
+                androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel',
+                androidNotificationChannelName: 'NKPlayer',
+                androidNotificationOngoing: true,          // keeps notification alive
+                androidStopForegroundOnPause: false,       // keep foreground even when paused
+                notificationColor: Colors.blueAccent,
+                androidNotificationIcon: 'mipmap/ic_launcher',
+              ),
+            );
+
+            runApp(MaterialApp(
+              title: 'NKPlayer',
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData.dark().copyWith(
+                primaryColor: Colors.blueAccent,
+                scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+              ),
+              home: const PermissionHandlerScreen(),
+            ));
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          //  Permission screen (unchanged logic)
+          // ─────────────────────────────────────────────────────────────────────
           class PermissionHandlerScreen extends StatefulWidget {
             const PermissionHandlerScreen({super.key});
             @override
@@ -97,23 +254,33 @@ jobs:
             Future<void> _checkPermissions() async {
               if (Platform.isAndroid) {
                 final info = await DeviceInfoPlugin().androidInfo;
-                int sdk = info.version.sdkInt;
-                // Handling permissions for Android 10 (29) to Android 16 (36)
-                if (sdk >= 33) {
-                  await [Permission.audio, Permission.notification].request();
-                } else if (sdk >= 30) {
+                final sdk = info.version.sdkInt;
+                if (sdk >= 30) {
                   await Permission.manageExternalStorage.request();
+                  if (sdk >= 33) {
+                    await Permission.audio.request();
+                    await Permission.notification.request();
+                  }
                 } else {
                   await Permission.storage.request();
                 }
               }
-              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FolderListScreen()));
+              if (mounted) {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (_) => const FolderListScreen()),
+                );
+              }
             }
 
             @override
-            Widget build(BuildContext context) => const Scaffold(body: Center(child: CircularProgressIndicator(color: Colors.blueAccent)));
+            Widget build(BuildContext context) =>
+                const Scaffold(body: Center(child: CircularProgressIndicator()));
           }
 
+          // ─────────────────────────────────────────────────────────────────────
+          //  Folder / Song list screens  (unchanged logic)
+          // ─────────────────────────────────────────────────────────────────────
           class CustomFolder {
             final String name;
             final List<SongModel> songs;
@@ -140,21 +307,25 @@ jobs:
               _loadData();
               _searchCtrl.addListener(() {
                 setState(() {
-                  _filteredSongs = _allSongs.where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase())).toList();
+                  _filteredSongs = _allSongs
+                      .where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase()))
+                      .toList();
                 });
               });
             }
 
             Future<void> _loadData() async {
-              List<SongModel> songs = await OnAudioQuery().querySongs();
-              Map<String, List<SongModel>> paths = {};
+              final songs = await OnAudioQuery().querySongs();
+              final Map<String, List<SongModel>> paths = {};
               for (var s in songs) {
-                if (s.data == null) continue;
+                if (s.data.isEmpty) continue;
                 paths.putIfAbsent(File(s.data).parent.path, () => []).add(s);
               }
               setState(() {
                 _allSongs = songs;
-                _folders = paths.entries.map((e) => CustomFolder(name: e.key.split('/').last, songs: e.value)).toList();
+                _folders = paths.entries
+                    .map((e) => CustomFolder(name: e.key.split('/').last, songs: e.value))
+                    .toList();
                 _loading = false;
               });
             }
@@ -167,17 +338,35 @@ jobs:
                       ? TextField(
                           controller: _searchCtrl,
                           autofocus: true,
-                          decoration: const InputDecoration(hintText: "Search all songs...", border: InputBorder.none),
+                          decoration: InputDecoration(
+                            hintText: "Search all songs...",
+                            border: InputBorder.none,
+                            suffixIcon: _searchCtrl.text.isNotEmpty
+                                ? Semantics(
+                                    label: "clear search button",
+                                    button: true,
+                                    excludeSemantics: true,
+                                    child: IconButton(
+                                        icon: const Icon(Icons.clear),
+                                        onPressed: () => _searchCtrl.clear()),
+                                  )
+                                : null,
+                          ),
                         )
                       : Text("Folders", style: GoogleFonts.poppins()),
                   actions: [
-                    IconButton(
-                      icon: Icon(_isSearching ? Icons.close : Icons.search),
-                      onPressed: () => setState(() {
-                        _isSearching = !_isSearching;
-                        if (!_isSearching) _searchCtrl.clear();
-                      }),
-                    )
+                    Semantics(
+                      label: _isSearching ? "close search button" : "search button",
+                      button: true,
+                      excludeSemantics: true,
+                      child: IconButton(
+                        icon: Icon(_isSearching ? Icons.close : Icons.search),
+                        onPressed: () => setState(() {
+                          _isSearching = !_isSearching;
+                          if (!_isSearching) _searchCtrl.clear();
+                        }),
+                      ),
+                    ),
                   ],
                 ),
                 body: _loading
@@ -185,21 +374,23 @@ jobs:
                     : _isSearching
                         ? ListView.builder(
                             itemCount: _filteredSongs.length,
-                            itemBuilder: (context, i) => ListTile(
+                            itemBuilder: (_, i) => ListTile(
                               leading: const Icon(Icons.music_note, color: Colors.blueAccent),
                               title: Text(_filteredSongs[i].title, maxLines: 1),
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filteredSongs, initialIndex: i))),
+                              onTap: () => Navigator.push(context,
+                                  MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filteredSongs, initialIndex: i))),
                             ),
                           )
                         : ListView.builder(
                             itemCount: _folders.length,
-                            itemBuilder: (context, i) {
+                            itemBuilder: (_, i) {
                               final f = _folders[i];
                               return ListTile(
                                 leading: const Icon(Icons.folder, color: Colors.amber),
                                 title: Text(f.name),
                                 subtitle: Text("${f.songs.length} media files"),
-                                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: f))),
+                                onTap: () => Navigator.push(context,
+                                    MaterialPageRoute(builder: (_) => SongListScreen(folder: f))),
                               );
                             },
                           ),
@@ -226,7 +417,9 @@ jobs:
               _filtered = widget.folder.songs;
               _searchCtrl.addListener(() {
                 setState(() {
-                  _filtered = widget.folder.songs.where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase())).toList();
+                  _filtered = widget.folder.songs
+                      .where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase()))
+                      .toList();
                 });
               });
             }
@@ -235,42 +428,85 @@ jobs:
             Widget build(BuildContext context) {
               return Scaffold(
                 appBar: AppBar(
-                  leading: _isSel ? IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })) : null,
+                  leading: _isSel
+                      ? Semantics(
+                          label: "close selection button",
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () => setState(() { _selected.clear(); _isSel = false; })),
+                        )
+                      : null,
                   title: _isSel
                       ? Text("${_selected.length} Selected")
                       : TextField(
                           controller: _searchCtrl,
-                          decoration: const InputDecoration(hintText: "Search in folder...", border: InputBorder.none),
+                          decoration: InputDecoration(
+                            hintText: "Search in folder...",
+                            border: InputBorder.none,
+                            suffixIcon: _searchCtrl.text.isNotEmpty
+                                ? Semantics(
+                                    label: "clear search button",
+                                    button: true,
+                                    excludeSemantics: true,
+                                    child: IconButton(
+                                        icon: const Icon(Icons.clear),
+                                        onPressed: () => _searchCtrl.clear()),
+                                  )
+                                : null,
+                          ),
                         ),
                   actions: _isSel
                       ? [
-                          IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
-                          IconButton(
-                                icon: const Icon(Icons.play_circle),
-                                onPressed: () {
-                                  Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _selected.map((i) => _filtered[i]).toList(), initialIndex: 0)));
-                                }),
+                          Semantics(
+                            label: "select all button",
+                            button: true,
+                            excludeSemantics: true,
+                            child: IconButton(
+                                icon: const Icon(Icons.select_all),
+                                onPressed: () => setState(
+                                    () => _selected.addAll(Iterable.generate(_filtered.length)))),
+                          ),
+                          Semantics(
+                            label: "play selected button",
+                            button: true,
+                            excludeSemantics: true,
+                            child: IconButton(
+                              icon: const Icon(Icons.play_circle),
+                              onPressed: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => PlayerScreen(
+                                          songs: _selected.map((i) => _filtered[i]).toList(),
+                                          initialIndex: 0))),
+                            ),
+                          ),
                         ]
                       : null,
                 ),
                 body: ListView.builder(
                   itemCount: _filtered.length,
-                  itemBuilder: (context, i) {
+                  itemBuilder: (_, i) {
                     final isS = _selected.contains(i);
                     return ListTile(
                       tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
-                      leading: Icon(isS ? Icons.check_circle : Icons.music_note, color: Colors.blueAccent),
+                      leading: Icon(isS ? Icons.check_circle : Icons.music_note,
+                          color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
                       title: Text(_filtered[i].title, maxLines: 1),
                       onLongPress: () => setState(() { _selected.add(i); _isSel = true; }),
                       onTap: () {
-                        if (_isSel)
+                        if (_isSel) {
                           setState(() {
                             if (isS) _selected.remove(i);
                             else _selected.add(i);
                             _isSel = _selected.isNotEmpty;
                           });
-                        else
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filtered, initialIndex: i)));
+                        } else {
+                          Navigator.push(context,
+                              MaterialPageRoute(
+                                  builder: (_) => PlayerScreen(songs: _filtered, initialIndex: i)));
+                        }
                       },
                     );
                   },
@@ -279,6 +515,9 @@ jobs:
             }
           }
 
+          // ─────────────────────────────────────────────────────────────────────
+          //  Player Screen  (uses audioHandler instead of AudioPlayer directly)
+          // ─────────────────────────────────────────────────────────────────────
           class PlayerScreen extends StatefulWidget {
             final List<SongModel> songs;
             final int initialIndex;
@@ -288,36 +527,37 @@ jobs:
           }
 
           class _PlayerScreenState extends State<PlayerScreen> {
+            Duration _pos = Duration.zero;
+            Duration _dur = Duration.zero;
             bool _playing = false;
-            Duration _p = Duration.zero, _d = Duration.zero;
+            int _idx = 0;
 
             @override
             void initState() {
               super.initState();
-              PlayerManager.currentPlaylist = widget.songs;
-              PlayerManager.currentIndex = widget.initialIndex;
-              PlayerManager.player.onPositionChanged.listen((p) => setState(() => _p = p));
-              PlayerManager.player.onDurationChanged.listen((d) => setState(() => _d = d));
-              PlayerManager.player.onPlayerComplete.listen((_) => _next());
-              _play();
+              _idx = widget.initialIndex;
+
+              // Load playlist into the background-safe handler
+              audioHandler.loadPlaylist(widget.songs, widget.initialIndex);
+
+              audioHandler.positionStream.listen((p) { if (mounted) setState(() => _pos = p); });
+              audioHandler.durationStream.listen((d) { if (mounted) setState(() => _dur = d ?? Duration.zero); });
+              audioHandler.playingStream.listen((pl) { if (mounted) setState(() => _playing = pl); });
+
+              // Track which song is showing in the UI
+              audioHandler.mediaItem.listen((item) {
+                if (item == null || !mounted) return;
+                final newIdx = widget.songs.indexWhere((s) => s.data == item.id);
+                if (newIdx != -1) setState(() => _idx = newIdx);
+              });
             }
 
-            void _play() async {
-              try {
-                await PlayerManager.player.play(DeviceFileSource(PlayerManager.currentPlaylist[PlayerManager.currentIndex].data));
-                setState(() => _playing = true);
-              } catch (e) {
-                debugPrint("Playback Error: $e");
-              }
-            }
-
-            void _next() { if (PlayerManager.currentIndex < PlayerManager.currentPlaylist.length - 1) { PlayerManager.currentIndex++; _play(); } }
-            void _prev() { if (PlayerManager.currentIndex > 0) { PlayerManager.currentIndex--; _play(); } }
-            String _fmt(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
+            String _fmt(Duration d) =>
+                d.toString().split('.').first.padLeft(8, '0').substring(2);
 
             @override
             Widget build(BuildContext context) {
-              final s = PlayerManager.currentPlaylist[PlayerManager.currentIndex];
+              final song = widget.songs[_idx];
               return Scaffold(
                 appBar: AppBar(title: const Text("Now Playing")),
                 body: Column(
@@ -325,20 +565,30 @@ jobs:
                   children: [
                     const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
                     const SizedBox(height: 30),
-                    Text(s.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        song.title,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(song.artist ?? 'Unknown Artist',
+                        style: const TextStyle(color: Colors.grey, fontSize: 14)),
                     Slider(
-                      activeColor: Colors.blueAccent,
-                      value: _p.inSeconds.toDouble(), 
-                      max: _d.inSeconds.toDouble() > 0 ? _d.inSeconds.toDouble() : 1.0, 
-                      onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt()))
+                      value: _pos.inSeconds.toDouble().clamp(0, _dur.inSeconds.toDouble() > 0 ? _dur.inSeconds.toDouble() : 1),
+                      max: _dur.inSeconds.toDouble() > 0 ? _dur.inSeconds.toDouble() : 1.0,
+                      onChanged: (v) => audioHandler.seek(Duration(seconds: v.toInt())),
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(_fmt(_p), style: const TextStyle(color: Colors.grey)),
-                          Text(_fmt(_d), style: const TextStyle(color: Colors.grey)),
+                          Text(_fmt(_pos), style: const TextStyle(color: Colors.grey)),
+                          Text(_fmt(_dur), style: const TextStyle(color: Colors.grey)),
                         ],
                       ),
                     ),
@@ -346,13 +596,32 @@ jobs:
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prev),
-                        FloatingActionButton.large(
-                          backgroundColor: Colors.blueAccent,
-                          onPressed: () { if (_playing) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _playing = !_playing); },
-                          child: Icon(_playing ? Icons.pause : Icons.play_arrow, size: 50, color: Colors.white),
+                        Semantics(
+                          label: "previous button",
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(
+                              icon: const Icon(Icons.skip_previous, size: 45),
+                              onPressed: () => audioHandler.skipToPrevious()),
                         ),
-                        IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _next),
+                        Semantics(
+                          label: _playing ? "pause button" : "play button",
+                          button: true,
+                          excludeSemantics: true,
+                          child: FloatingActionButton.large(
+                            backgroundColor: Colors.blueAccent,
+                            onPressed: () => _playing ? audioHandler.pause() : audioHandler.play(),
+                            child: Icon(_playing ? Icons.pause : Icons.play_arrow, size: 50),
+                          ),
+                        ),
+                        Semantics(
+                          label: "next button",
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(
+                              icon: const Icon(Icons.skip_next, size: 45),
+                              onPressed: () => audioHandler.skipToNext()),
+                        ),
                       ],
                     ),
                   ],
@@ -360,7 +629,7 @@ jobs:
               );
             }
           }
-          EOF
+          DART
 
       - name: Build APK
         run: |
@@ -370,5 +639,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.51
+          name: NKPlayer-v1.0.52
           path: build/app/outputs/flutter-apk/app-release.apk
