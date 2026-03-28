@@ -1,4 +1,4 @@
-name: NKPlayer - Final Accessibility Fix (v1.0.20)
+name: NKPlayer - Background & Notification (v1.0.21)
 on: [push]
 
 jobs:
@@ -24,14 +24,15 @@ jobs:
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.20+110
+          version: 1.0.21+111
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
           dependencies:
             flutter:
               sdk: flutter
-            audioplayers: ^5.2.1
+            just_audio: ^0.9.36
+            just_audio_background: ^0.0.1-beta.11
             on_audio_query: ^2.9.0
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
@@ -40,18 +41,33 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Injecting Permissions and Legacy Storage Fix for Android 10
+          # Injecting Permissions, Background Service and Legacy Storage Fix
           python3 -c "
           import os
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
+          
           perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
-              <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n'''
+              <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />
+              <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />
+              <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK\" />\n'''
+          
+          service_tag = '''
+                  <service android:name=\"com.ryanheise.audioservice.AudioService\"
+                      android:foregroundServiceType=\"mediaPlayback\"
+                      android:exported=\"true\">
+                      <intent-filter>
+                          <action android:name=\"android.media.browse.MediaBrowserService\" />
+                      </intent-filter>
+                  </service>\n'''
+          
           content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\"')
+          content = content.replace('</activity>', '</activity>' + service_tag)
+          
           with open(path, 'w') as f:
               f.write(content)
           "
@@ -60,7 +76,8 @@ jobs:
           import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:on_audio_query/on_audio_query.dart';
-          import 'package:audioplayers/audioplayers.dart';
+          import 'package:just_audio/just_audio.dart';
+          import 'package:just_audio_background/just_audio_background.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
@@ -68,18 +85,25 @@ jobs:
           class PlayerManager {
             static final AudioPlayer player = AudioPlayer();
             static List<SongModel> currentPlaylist = [];
-            static int currentIndex = 0;
           }
 
-          void main() => runApp(MaterialApp(
-                title: 'NKPlayer',
-                debugShowCheckedModeBanner: false,
-                theme: ThemeData.dark().copyWith(
-                  primaryColor: Colors.blueAccent,
-                  scaffoldBackgroundColor: const Color(0xFF0F0F0F),
-                ),
-                home: const PermissionHandlerScreen(),
-              ));
+          Future<void> main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            await JustAudioBackground.init(
+              androidNotificationChannelId: 'com.nareshkushmi.nkplayer.channel.audio',
+              androidNotificationChannelName: 'NKPlayer Audio Playback',
+              androidNotificationOngoing: true,
+            );
+            runApp(MaterialApp(
+              title: 'NKPlayer',
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData.dark().copyWith(
+                primaryColor: Colors.blueAccent,
+                scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+              ),
+              home: const PermissionHandlerScreen(),
+            ));
+          }
 
           class PermissionHandlerScreen extends StatefulWidget {
             const PermissionHandlerScreen({super.key});
@@ -97,10 +121,9 @@ jobs:
             Future<void> _checkPermissions() async {
               if (Platform.isAndroid) {
                 final info = await DeviceInfoPlugin().androidInfo;
-                int sdk = info.version.sdkInt;
-                if (sdk >= 30) {
+                if (info.version.sdkInt >= 30) {
                   await Permission.manageExternalStorage.request();
-                  if (sdk >= 33) {
+                  if (info.version.sdkInt >= 33) {
                     await Permission.audio.request();
                     await Permission.notification.request();
                   }
@@ -306,7 +329,7 @@ jobs:
                     final isS = _selected.contains(i);
                     return ListTile(
                       tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
-                      leading: Icon(isS ? Icons.check_circle : Icons.music_note, color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                      leading: Icon(isS ? Icons.check_circle : Icons.music_note, color: isS ? Colors.blueAccent : Colors.grey),
                       title: Text(_filtered[i].title, maxLines: 1),
                       onLongPress: () => setState(() { _selected.add(i); _isSel = true; }),
                       onTap: () {
@@ -335,74 +358,110 @@ jobs:
           }
 
           class _PlayerScreenState extends State<PlayerScreen> {
-            bool _playing = false;
-            Duration _p = Duration.zero, _d = Duration.zero;
+            int _idx = 0;
 
             @override
             void initState() {
               super.initState();
+              _idx = widget.initialIndex;
               PlayerManager.currentPlaylist = widget.songs;
-              PlayerManager.currentIndex = widget.initialIndex;
-              PlayerManager.player.onPositionChanged.listen((p) => setState(() => _p = p));
-              PlayerManager.player.onDurationChanged.listen((d) => setState(() => _d = d));
-              PlayerManager.player.onPlayerComplete.listen((_) => _next());
-              _play();
+              _setupPlaylist();
             }
 
-            void _play() async {
-              try {
-                await PlayerManager.player.play(DeviceFileSource(PlayerManager.currentPlaylist[PlayerManager.currentIndex].data));
-                setState(() => _playing = true);
-              } catch (e) {
-                debugPrint("Playback Error: $e");
-              }
+            void _setupPlaylist() async {
+              final playlist = ConcatenatingAudioSource(
+                children: PlayerManager.currentPlaylist.map((s) => AudioSource.uri(
+                  Uri.parse(s.data),
+                  tag: MediaItem(
+                    id: s.id.toString(),
+                    title: s.title,
+                    artist: s.artist ?? "Unknown Artist",
+                  ),
+                )).toList(),
+              );
+              await PlayerManager.player.setAudioSource(playlist, initialIndex: _idx);
+              PlayerManager.player.play();
             }
 
-            void _next() { if (PlayerManager.currentIndex < PlayerManager.currentPlaylist.length - 1) { PlayerManager.currentIndex++; _play(); } }
-            void _prev() { if (PlayerManager.currentIndex > 0) { PlayerManager.currentIndex--; _play(); } }
             String _fmt(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
 
             @override
             Widget build(BuildContext context) {
-              final s = PlayerManager.currentPlaylist[PlayerManager.currentIndex];
               return Scaffold(
-                appBar: AppBar(title: const Text("Now Playing")),
-                body: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
-                    const SizedBox(height: 30),
-                    Text(s.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                    Slider(value: _p.inSeconds.toDouble(), max: _d.inSeconds.toDouble() > 0 ? _d.inSeconds.toDouble() : 1.0, onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt()))),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(_fmt(_p), style: const TextStyle(color: Colors.grey)),
-                          Text(_fmt(_d), style: const TextStyle(color: Colors.grey)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                app_bar: AppBar(title: const Text("Now Playing")),
+                body: StreamBuilder<SequenceState?>(
+                  stream: PlayerManager.player.sequenceStateStream,
+                  builder: (context, snapshot) {
+                    final state = snapshot.data;
+                    if (state == null) return const Center(child: CircularProgressIndicator());
+                    final metadata = state.currentSource!.tag as MediaItem;
+                    return Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Semantics(label: "previous button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: _prev)),
-                        Semantics(
-                          label: _playing ? "pause button" : "play button",
-                          button: true,
-                          excludeSemantics: true,
-                          child: FloatingActionButton.large(
-                            backgroundColor: Colors.blueAccent,
-                            onPressed: () { if (_playing) PlayerManager.player.pause(); else PlayerManager.player.resume(); setState(() => _playing = !_playing); },
-                            child: Icon(_playing ? Icons.pause : Icons.play_arrow, size: 50),
-                          ),
+                        const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
+                        const SizedBox(height: 30),
+                        Text(metadata.title, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text(metadata.artist ?? "", style: const TextStyle(color: Colors.grey)),
+                        StreamBuilder<Duration>(
+                          stream: PlayerManager.player.positionStream,
+                          builder: (context, snap) {
+                            final pos = snap.data ?? Duration.zero;
+                            final dur = PlayerManager.player.duration ?? Duration.zero;
+                            return Column(
+                              children: [
+                                Slider(
+                                  value: pos.inSeconds.toDouble(),
+                                  max: dur.inSeconds.toDouble() > 0 ? dur.inSeconds.toDouble() : 1.0,
+                                  onChanged: (v) => PlayerManager.player.seek(Duration(seconds: v.toInt())),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [Text(_fmt(pos)), Text(_fmt(dur))],
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
-                        Semantics(label: "next button", button: true, excludeSemantics: true, child: IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: _next)),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            Semantics(
+                              label: "previous button",
+                              button: true,
+                              excludeSemantics: true,
+                              child: IconButton(icon: const Icon(Icons.skip_previous, size: 45), onPressed: PlayerManager.player.seekToPrevious),
+                            ),
+                            StreamBuilder<PlayerState>(
+                              stream: PlayerManager.player.playerStateStream,
+                              builder: (context, snap) {
+                                final playing = snap.data?.playing ?? false;
+                                return Semantics(
+                                  label: playing ? "pause button" : "play button",
+                                  button: true,
+                                  excludeSemantics: true,
+                                  child: FloatingActionButton.large(
+                                    backgroundColor: Colors.blueAccent,
+                                    onPressed: playing ? PlayerManager.player.pause : PlayerManager.player.play,
+                                    child: Icon(playing ? Icons.pause : Icons.play_arrow, size: 50),
+                                  ),
+                                );
+                              },
+                            ),
+                            Semantics(
+                              label: "next button",
+                              button: true,
+                              excludeSemantics: true,
+                              child: IconButton(icon: const Icon(Icons.skip_next, size: 45), onPressed: PlayerManager.player.seekToNext),
+                            ),
+                          ],
+                        ),
                       ],
-                    ),
-                  ],
+                    );
+                  },
                 ),
               );
             }
@@ -417,5 +476,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.20
+          name: NKPlayer-v1.0.21
           path: build/app/outputs/flutter-apk/app-release.apk
