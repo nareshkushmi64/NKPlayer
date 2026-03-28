@@ -1,4 +1,4 @@
-name: NKPlayer - Android 10 Playback Fix (v1.0.16)
+name: NKPlayer - Search Enhancements (v1.0.17)
 on: [push]
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.16+106
+          version: 1.0.17+107
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -46,17 +46,12 @@ jobs:
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path, 'r') as f:
               content = f.read()
-          
-          # Permissions
           perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>
               <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
               <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n'''
-          
-          # Fix for Android 10 Legacy Storage
           content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\"')
-          
           with open(path, 'w') as f:
               f.write(content)
           "
@@ -103,7 +98,6 @@ jobs:
               if (Platform.isAndroid) {
                 final info = await DeviceInfoPlugin().androidInfo;
                 int sdk = info.version.sdkInt;
-                
                 if (sdk >= 30) {
                   await Permission.manageExternalStorage.request();
                   if (sdk >= 33) {
@@ -111,7 +105,6 @@ jobs:
                     await Permission.notification.request();
                   }
                 } else {
-                  // This covers Android 10 (SDK 29) and below
                   await Permission.storage.request();
                 }
               }
@@ -128,41 +121,100 @@ jobs:
             CustomFolder({required this.name, required this.songs});
           }
 
-          class FolderListScreen extends StatelessWidget {
+          class FolderListScreen extends StatefulWidget {
             const FolderListScreen({super.key});
+            @override
+            State<FolderListScreen> createState() => _FolderListScreenState();
+          }
 
-            Future<List<CustomFolder>> _getFolders() async {
+          class _FolderListScreenState extends State<FolderListScreen> {
+            final TextEditingController _searchCtrl = TextEditingController();
+            bool _isSearching = false;
+            List<CustomFolder> _folders = [];
+            List<SongModel> _allSongs = [];
+            List<SongModel> _filteredSongs = [];
+            bool _loading = true;
+
+            @override
+            void initState() {
+              super.initState();
+              _loadData();
+              _searchCtrl.addListener(() {
+                setState(() {
+                  _filteredSongs = _allSongs.where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase())).toList();
+                });
+              });
+            }
+
+            Future<void> _loadData() async {
               List<SongModel> songs = await OnAudioQuery().querySongs();
               Map<String, List<SongModel>> paths = {};
               for (var s in songs) {
                 if (s.data == null) continue;
                 paths.putIfAbsent(File(s.data).parent.path, () => []).add(s);
               }
-              return paths.entries.map((e) => CustomFolder(name: e.key.split('/').last, songs: e.value)).toList();
+              setState(() {
+                _allSongs = songs;
+                _folders = paths.entries.map((e) => CustomFolder(name: e.key.split('/').last, songs: e.value)).toList();
+                _loading = false;
+              });
             }
 
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: Text("Folders", style: GoogleFonts.poppins())),
-                body: FutureBuilder<List<CustomFolder>>(
-                  future: _getFolders(),
-                  builder: (context, snap) {
-                    if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-                    return ListView.builder(
-                      itemCount: snap.data!.length,
-                      itemBuilder: (context, i) {
-                        final f = snap.data![i];
-                        return ListTile(
-                          leading: const Icon(Icons.folder, color: Colors.amber),
-                          title: Text(f.name),
-                          subtitle: Text("${f.songs.length} media files"),
-                          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: f))),
-                        );
-                      },
-                    );
-                  },
+                appBar: AppBar(
+                  title: _isSearching
+                      ? TextField(
+                          controller: _searchCtrl,
+                          autofocus: true,
+                          decoration: InputDecoration(
+                            hintText: "Search all songs...",
+                            border: InputBorder.none,
+                            suffixIcon: _searchCtrl.text.isNotEmpty
+                                ? Semantics(
+                                    label: "Clear search button",
+                                    button: true,
+                                    excludeSemantics: true,
+                                    child: IconButton(icon: const Icon(Icons.clear), onPressed: () => _searchCtrl.clear()),
+                                  )
+                                : null,
+                          ),
+                        )
+                      : Text("Folders", style: GoogleFonts.poppins()),
+                  actions: [
+                    IconButton(
+                      icon: Icon(_isSearching ? Icons.close : Icons.search),
+                      onPressed: () => setState(() {
+                        _isSearching = !_isSearching;
+                        if (!_isSearching) _searchCtrl.clear();
+                      }),
+                    )
+                  ],
                 ),
+                body: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _isSearching
+                        ? ListView.builder(
+                            itemCount: _filteredSongs.length,
+                            itemBuilder: (context, i) => ListTile(
+                              leading: const Icon(Icons.music_note, color: Colors.blueAccent),
+                              title: Text(_filteredSongs[i].title, maxLines: 1),
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filteredSongs, initialIndex: i))),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: _folders.length,
+                            itemBuilder: (context, i) {
+                              final f = _folders[i];
+                              return ListTile(
+                                leading: const Icon(Icons.folder, color: Colors.amber),
+                                title: Text(f.name),
+                                subtitle: Text("${f.songs.length} media files"),
+                                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SongListScreen(folder: f))),
+                              );
+                            },
+                          ),
               );
             }
           }
@@ -175,43 +227,71 @@ jobs:
           }
 
           class _SongListScreenState extends State<SongListScreen> {
+            final TextEditingController _searchCtrl = TextEditingController();
             final Set<int> _selected = {};
             bool _isSel = false;
             List<SongModel> _filtered = [];
 
             @override
-            void initState() { super.initState(); _filtered = widget.folder.songs; }
+            void initState() {
+              super.initState();
+              _filtered = widget.folder.songs;
+              _searchCtrl.addListener(() {
+                setState(() {
+                  _filtered = widget.folder.songs.where((s) => s.title.toLowerCase().contains(_searchCtrl.text.toLowerCase())).toList();
+                });
+              });
+            }
 
             @override
             Widget build(BuildContext context) {
               return Scaffold(
                 appBar: AppBar(
-                  leading: _isSel ? Semantics(
-                    label: "Close selection button",
-                    button: true,
-                    excludeSemantics: true,
-                    child: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })),
-                  ) : null,
-                  title: _isSel ? Text("${_selected.length} Selected") : TextField(
-                    onChanged: (v) => setState(() => _filtered = widget.folder.songs.where((s) => s.title.toLowerCase().contains(v.toLowerCase())).toList()),
-                    decoration: const InputDecoration(hintText: "Search...", border: InputBorder.none),
-                  ),
-                  actions: _isSel ? [
-                    Semantics(
-                      label: "Select all button",
-                      button: true,
-                      excludeSemantics: true,
-                      child: IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
-                    ),
-                    Semantics(
-                      label: "Play selected button",
-                      button: true,
-                      excludeSemantics: true,
-                      child: IconButton(icon: const Icon(Icons.play_circle), onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _selected.map((i) => _filtered[i]).toList(), initialIndex: 0)));
-                      }),
-                    ),
-                  ] : null,
+                  leading: _isSel
+                      ? Semantics(
+                          label: "Close selection button",
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selected.clear(); _isSel = false; })),
+                        )
+                      : null,
+                  title: _isSel
+                      ? Text("${_selected.length} Selected")
+                      : TextField(
+                          controller: _searchCtrl,
+                          decoration: InputDecoration(
+                            hintText: "Search in folder...",
+                            border: InputBorder.none,
+                            suffixIcon: _searchCtrl.text.isNotEmpty
+                                ? Semantics(
+                                    label: "Clear search button",
+                                    button: true,
+                                    excludeSemantics: true,
+                                    child: IconButton(icon: const Icon(Icons.clear), onPressed: () => _searchCtrl.clear()),
+                                  )
+                                : null,
+                          ),
+                        ),
+                  actions: _isSel
+                      ? [
+                          Semantics(
+                            label: "Select all button",
+                            button: true,
+                            excludeSemantics: true,
+                            child: IconButton(icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(Iterable.generate(_filtered.length)))),
+                          ),
+                          Semantics(
+                            label: "Play selected button",
+                            button: true,
+                            excludeSemantics: true,
+                            child: IconButton(
+                                icon: const Icon(Icons.play_circle),
+                                onPressed: () {
+                                  Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _selected.map((i) => _filtered[i]).toList(), initialIndex: 0)));
+                                }),
+                          ),
+                        ]
+                      : null,
                 ),
                 body: ListView.builder(
                   itemCount: _filtered.length,
@@ -223,8 +303,14 @@ jobs:
                       title: Text(_filtered[i].title, maxLines: 1),
                       onLongPress: () => setState(() { _selected.add(i); _isSel = true; }),
                       onTap: () {
-                        if (_isSel) setState(() { if (isS) _selected.remove(i); else _selected.add(i); _isSel = _selected.isNotEmpty; });
-                        else Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filtered, initialIndex: i)));
+                        if (_isSel)
+                          setState(() {
+                            if (isS) _selected.remove(i);
+                            else _selected.add(i);
+                            _isSel = _selected.isNotEmpty;
+                          });
+                        else
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerScreen(songs: _filtered, initialIndex: i)));
                       },
                     );
                   },
@@ -267,7 +353,6 @@ jobs:
 
             void _next() { if (PlayerManager.currentIndex < PlayerManager.currentPlaylist.length - 1) { PlayerManager.currentIndex++; _play(); } }
             void _prev() { if (PlayerManager.currentIndex > 0) { PlayerManager.currentIndex--; _play(); } }
-
             String _fmt(Duration d) => d.toString().split('.').first.padLeft(8, "0").substring(2);
 
             @override
@@ -325,5 +410,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.16
+          name: NKPlayer-v1.0.17
           path: build/app/outputs/flutter-apk/app-release.apk
