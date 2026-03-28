@@ -1,0 +1,670 @@
+name: NKPlayer - Background Playback (v1.0.52)
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+
+      - name: Generate NKPlayer Project
+        run: |
+          flutter create --org com.nareshkushmi --project-name nkplayer .
+
+          sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
+          sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle || true
+
+          # Upgrade Kotlin plugin version in root build.gradle
+          python3 -c "
+          path = 'android/build.gradle'
+          with open(path) as f: c = f.read()
+          import re
+          c = re.sub(r'kotlin-gradle-plugin:[0-9.]+', 'kotlin-gradle-plugin:1.8.22', c)
+          c = re.sub(r\"ext\.kotlin_version\s*=\s*'[^']+'\", \"ext.kotlin_version = '1.8.22'\", c)
+          with open(path, 'w') as f: f.write(c)
+          print('Root build.gradle updated')
+          "
+
+          # ── pubspec.yaml ──────────────────────────────────────────────────────
+          cat <<'PUBSPEC' > pubspec.yaml
+          name: nkplayer
+          description: NKPlayer Pro - Accessible Media Player with Background Playback.
+          version: 1.0.52+53
+          publish_to: 'none'
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          dependencies:
+            flutter:
+              sdk: flutter
+            on_audio_query: ^2.9.0
+            permission_handler: ^11.3.0
+            google_fonts: ^6.1.0
+            device_info_plus: ^10.1.0
+          flutter:
+            uses-material-design: true
+          PUBSPEC
+
+          # ── AndroidManifest.xml ───────────────────────────────────────────────
+          python3 -c "
+          path = 'android/app/src/main/AndroidManifest.xml'
+          with open(path) as f: c = f.read()
+          perms = '''    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>
+              <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>
+              <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>
+              <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />
+              <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />
+              <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />
+              <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK\" />\n'''
+          service = '''
+              <service
+                  android:name=\".MusicService\"
+                  android:foregroundServiceType=\"mediaPlayback\"
+                  android:stopWithTask=\"false\"
+                  android:exported=\"false\" />
+              <receiver android:name=\".MusicReceiver\" android:exported=\"false\">
+                  <intent-filter>
+                      <action android:name=\"com.nareshkushmi.nkplayer.PREV\" />
+                      <action android:name=\"com.nareshkushmi.nkplayer.PLAY_PAUSE\" />
+                      <action android:name=\"com.nareshkushmi.nkplayer.NEXT\" />
+                      <action android:name=\"com.nareshkushmi.nkplayer.STOP\" />
+                  </intent-filter>
+              </receiver>\n'''
+          c = c.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\"')
+          c = c.replace('</application>', service + '    </application>')
+          with open(path, 'w') as f: f.write(c)
+          "
+
+          mkdir -p android/app/src/main/kotlin/com/nareshkushmi/nkplayer
+
+          # ── MusicReceiver.kt ──────────────────────────────────────────────────
+          cat <<'KT' > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MusicReceiver.kt
+          package com.nareshkushmi.nkplayer
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+          import android.os.Build
+
+          class MusicReceiver : BroadcastReceiver() {
+              override fun onReceive(context: Context, intent: Intent) {
+                  val si = Intent(context, MusicService::class.java)
+                  si.action = intent.action
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                      context.startForegroundService(si)
+                  else
+                      context.startService(si)
+              }
+          }
+          KT
+
+          # ── MusicService.kt ───────────────────────────────────────────────────
+          cat <<'KT' > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MusicService.kt
+          package com.nareshkushmi.nkplayer
+
+          import android.app.*
+          import android.content.Intent
+          import android.media.MediaPlayer
+          import android.os.Build
+          import android.os.IBinder
+
+          class MusicService : Service() {
+
+              companion object {
+                  const val CHANNEL_ID        = "nkplayer_ch"
+                  const val NOTIF_ID          = 1
+                  const val ACTION_PREV       = "com.nareshkushmi.nkplayer.PREV"
+                  const val ACTION_PLAY_PAUSE = "com.nareshkushmi.nkplayer.PLAY_PAUSE"
+                  const val ACTION_NEXT       = "com.nareshkushmi.nkplayer.NEXT"
+                  const val ACTION_STOP       = "com.nareshkushmi.nkplayer.STOP"
+                  const val ACTION_UPDATE     = "com.nareshkushmi.nkplayer.UPDATE"
+                  const val EXTRA_PATHS       = "paths"
+                  const val EXTRA_TITLES      = "titles"
+                  const val EXTRA_ARTISTS     = "artists"
+                  const val EXTRA_INDEX       = "index"
+
+                  var currentIndex: Int = 0
+                  var playing: Boolean = false
+                  var onSongChanged: ((Int, Boolean) -> Unit)? = null
+              }
+
+              private var mp: MediaPlayer? = null
+              private var paths:   ArrayList<String> = arrayListOf()
+              private var titles:  ArrayList<String> = arrayListOf()
+              private var artists: ArrayList<String> = arrayListOf()
+              private var title  = "NKPlayer"
+              private var artist = "Unknown"
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  createChannel()
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  when (intent?.action) {
+                      ACTION_STOP -> { stopAll(); return START_NOT_STICKY }
+                      ACTION_PREV -> { if (currentIndex > 0) { currentIndex--; playTrack() } }
+                      ACTION_PLAY_PAUSE -> { togglePause() }
+                      ACTION_NEXT -> { if (currentIndex < paths.size - 1) { currentIndex++; playTrack() } }
+                      else -> {
+                          val p = intent?.getStringArrayListExtra(EXTRA_PATHS)
+                          if (p != null && p.isNotEmpty()) {
+                              paths   = p
+                              titles  = intent.getStringArrayListExtra(EXTRA_TITLES)  ?: arrayListOf()
+                              artists = intent.getStringArrayListExtra(EXTRA_ARTISTS) ?: arrayListOf()
+                              currentIndex = intent.getIntExtra(EXTRA_INDEX, 0)
+                              playTrack()
+                          }
+                      }
+                  }
+                  return START_STICKY
+              }
+
+              private fun playTrack() {
+                  mp?.release(); mp = null
+                  title  = titles.getOrElse(currentIndex)  { "Unknown" }
+                  artist = artists.getOrElse(currentIndex) { "Unknown" }
+                  try {
+                      mp = MediaPlayer().apply {
+                          setDataSource(paths[currentIndex])
+                          prepare()
+                          start()
+                          setOnCompletionListener {
+                              if (currentIndex < paths.size - 1) { currentIndex++; playTrack() }
+                              else { playing = false; notify() }
+                          }
+                      }
+                      playing = true
+                      onSongChanged?.invoke(currentIndex, true)
+                      startForeground(NOTIF_ID, buildNotif())
+                  } catch (e: Exception) { e.printStackTrace() }
+              }
+
+              private fun togglePause() {
+                  val m = mp ?: return
+                  if (m.isPlaying) { m.pause(); playing = false }
+                  else             { m.start(); playing = true  }
+                  onSongChanged?.invoke(currentIndex, playing)
+                  updateNotif()
+              }
+
+              private fun stopAll() {
+                  mp?.apply { if (isPlaying) stop(); release() }; mp = null
+                  playing = false
+                  stopForeground(true)
+                  stopSelf()
+              }
+
+              private fun updateNotif() {
+                  val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                  nm.notify(NOTIF_ID, buildNotif())
+              }
+
+              private fun pi(req: Int, action: String) = PendingIntent.getBroadcast(
+                  this, req,
+                  Intent(action).setPackage(packageName),
+                  PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+              )
+
+              private fun buildNotif(): Notification {
+                  val playIcon = if (playing) android.R.drawable.ic_media_pause
+                                 else         android.R.drawable.ic_media_play
+                  val playLabel = if (playing) "Pause" else "Play"
+
+                  return Notification.Builder(this, CHANNEL_ID)
+                      .setContentTitle(title)
+                      .setContentText(artist)
+                      .setSmallIcon(android.R.drawable.ic_media_play)
+                      .setOngoing(playing)
+                      .setVisibility(Notification.VISIBILITY_PUBLIC)
+                      .addAction(Notification.Action.Builder(
+                          android.R.drawable.ic_media_previous, "Prev", pi(0, ACTION_PREV)).build())
+                      .addAction(Notification.Action.Builder(
+                          playIcon, playLabel, pi(1, ACTION_PLAY_PAUSE)).build())
+                      .addAction(Notification.Action.Builder(
+                          android.R.drawable.ic_media_next, "Next", pi(2, ACTION_NEXT)).build())
+                      .addAction(Notification.Action.Builder(
+                          android.R.drawable.ic_delete, "Stop", pi(3, ACTION_STOP)).build())
+                      .setStyle(Notification.MediaStyle()
+                          .setShowActionsInCompactView(0, 1, 2))
+                      .build()
+              }
+
+              private fun createChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val ch = NotificationChannel(CHANNEL_ID, "NKPlayer",
+                          NotificationManager.IMPORTANCE_LOW).apply { setSound(null, null) }
+                      (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                          .createNotificationChannel(ch)
+                  }
+              }
+
+              override fun onTaskRemoved(rootIntent: Intent?) { /* keep playing */ }
+
+              override fun onDestroy() {
+                  mp?.release(); mp = null
+                  super.onDestroy()
+              }
+          }
+          KT
+
+          # ── MainActivity.kt ───────────────────────────────────────────────────
+          cat <<'KT' > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MainActivity.kt
+          package com.nareshkushmi.nkplayer
+
+          import android.content.Intent
+          import android.os.Build
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity : FlutterActivity() {
+              private val CH = "com.nareshkushmi.nkplayer/music"
+
+              override fun configureFlutterEngine(fe: FlutterEngine) {
+                  super.configureFlutterEngine(fe)
+                  val ch = MethodChannel(fe.dartExecutor.binaryMessenger, CH)
+
+                  MusicService.onSongChanged = { idx, isPlaying ->
+                      runOnUiThread {
+                          ch.invokeMethod("onSongChanged",
+                              mapOf("index" to idx, "isPlaying" to isPlaying))
+                      }
+                  }
+
+                  ch.setMethodCallHandler { call, result ->
+                      when (call.method) {
+                          "start" -> {
+                              val i = Intent(this, MusicService::class.java).apply {
+                                  action = MusicService.ACTION_UPDATE
+                                  putStringArrayListExtra(MusicService.EXTRA_PATHS,
+                                      ArrayList(call.argument<List<String>>("paths") ?: emptyList()))
+                                  putStringArrayListExtra(MusicService.EXTRA_TITLES,
+                                      ArrayList(call.argument<List<String>>("titles") ?: emptyList()))
+                                  putStringArrayListExtra(MusicService.EXTRA_ARTISTS,
+                                      ArrayList(call.argument<List<String>>("artists") ?: emptyList()))
+                                  putExtra(MusicService.EXTRA_INDEX, call.argument<Int>("index") ?: 0)
+                              }
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                  startForegroundService(i)
+                              else startService(i)
+                              result.success(null)
+                          }
+                          "stop" -> {
+                              startService(Intent(this, MusicService::class.java).apply {
+                                  action = MusicService.ACTION_STOP })
+                              result.success(null)
+                          }
+                          else -> result.notImplemented()
+                      }
+                  }
+              }
+          }
+          KT
+
+          # ── lib/main.dart ─────────────────────────────────────────────────────
+          cat <<'DART' > lib/main.dart
+          import 'dart:io';
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'package:on_audio_query/on_audio_query.dart';
+          import 'package:permission_handler/permission_handler.dart';
+          import 'package:google_fonts/google_fonts.dart';
+          import 'package:device_info_plus/device_info_plus.dart';
+
+          const _ch = MethodChannel('com.nareshkushmi.nkplayer/music');
+
+          Future<void> startMusic(List<SongModel> songs, int index) async {
+            try {
+              await _ch.invokeMethod('start', {
+                'paths':   songs.map((s) => s.data).toList(),
+                'titles':  songs.map((s) => s.title).toList(),
+                'artists': songs.map((s) => s.artist ?? 'Unknown').toList(),
+                'index':   index,
+              });
+            } catch (e) { debugPrint('startMusic: $e'); }
+          }
+
+          Future<void> stopMusic() async {
+            try { await _ch.invokeMethod('stop'); } catch (_) {}
+          }
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            runApp(const NKPlayerApp());
+          }
+
+          class NKPlayerApp extends StatelessWidget {
+            const NKPlayerApp({super.key});
+            @override
+            Widget build(BuildContext context) => MaterialApp(
+                  title: 'NKPlayer',
+                  debugShowCheckedModeBanner: false,
+                  theme: ThemeData.dark().copyWith(
+                    primaryColor: Colors.blueAccent,
+                    scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+                  ),
+                  home: const PermissionHandlerScreen(),
+                );
+          }
+
+          class PermissionHandlerScreen extends StatefulWidget {
+            const PermissionHandlerScreen({super.key});
+            @override
+            State<PermissionHandlerScreen> createState() =>
+                _PermissionHandlerScreenState();
+          }
+
+          class _PermissionHandlerScreenState
+              extends State<PermissionHandlerScreen> {
+            @override
+            void initState() { super.initState(); _check(); }
+
+            Future<void> _check() async {
+              if (Platform.isAndroid) {
+                final sdk = (await DeviceInfoPlugin().androidInfo).version.sdkInt;
+                if (sdk >= 30) {
+                  await Permission.manageExternalStorage.request();
+                  if (sdk >= 33) {
+                    await Permission.audio.request();
+                    await Permission.notification.request();
+                  }
+                } else {
+                  await Permission.storage.request();
+                }
+              }
+              if (mounted) Navigator.pushReplacement(context,
+                  MaterialPageRoute(builder: (_) => const FolderListScreen()));
+            }
+
+            @override
+            Widget build(BuildContext context) =>
+                const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+
+          class CustomFolder {
+            final String name;
+            final List<SongModel> songs;
+            CustomFolder({required this.name, required this.songs});
+          }
+
+          class FolderListScreen extends StatefulWidget {
+            const FolderListScreen({super.key});
+            @override
+            State<FolderListScreen> createState() => _FolderListScreenState();
+          }
+
+          class _FolderListScreenState extends State<FolderListScreen> {
+            final _sc = TextEditingController();
+            bool _searching = false;
+            List<CustomFolder> _folders = [];
+            List<SongModel> _all = [], _filtered = [];
+            bool _loading = true;
+
+            @override
+            void initState() {
+              super.initState();
+              _load();
+              _sc.addListener(() => setState(() {
+                    _filtered = _all.where((s) => s.title.toLowerCase()
+                        .contains(_sc.text.toLowerCase())).toList();
+                  }));
+            }
+
+            Future<void> _load() async {
+              final songs = await OnAudioQuery().querySongs();
+              final Map<String, List<SongModel>> map = {};
+              for (var s in songs) {
+                if (s.data.isEmpty) continue;
+                map.putIfAbsent(File(s.data).parent.path, () => []).add(s);
+              }
+              setState(() {
+                _all = songs;
+                _folders = map.entries.map((e) =>
+                    CustomFolder(name: e.key.split('/').last, songs: e.value)).toList();
+                _loading = false;
+              });
+            }
+
+            @override
+            Widget build(BuildContext context) => Scaffold(
+                  appBar: AppBar(
+                    title: _searching
+                        ? TextField(
+                            controller: _sc,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              hintText: 'Search songs...',
+                              border: InputBorder.none,
+                              suffixIcon: _sc.text.isNotEmpty
+                                  ? IconButton(icon: const Icon(Icons.clear),
+                                      onPressed: () => _sc.clear()) : null,
+                            ))
+                        : Text('Folders', style: GoogleFonts.poppins()),
+                    actions: [
+                      IconButton(
+                        icon: Icon(_searching ? Icons.close : Icons.search),
+                        onPressed: () => setState(() {
+                          _searching = !_searching;
+                          if (!_searching) _sc.clear();
+                        }),
+                      ),
+                    ],
+                  ),
+                  body: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _searching
+                          ? ListView.builder(
+                              itemCount: _filtered.length,
+                              itemBuilder: (_, i) => ListTile(
+                                leading: const Icon(Icons.music_note,
+                                    color: Colors.blueAccent),
+                                title: Text(_filtered[i].title, maxLines: 1),
+                                onTap: () => Navigator.push(context, MaterialPageRoute(
+                                    builder: (_) => PlayerScreen(
+                                        songs: _filtered, initialIndex: i))),
+                              ))
+                          : ListView.builder(
+                              itemCount: _folders.length,
+                              itemBuilder: (_, i) {
+                                final f = _folders[i];
+                                return ListTile(
+                                  leading: const Icon(Icons.folder,
+                                      color: Colors.amber),
+                                  title: Text(f.name),
+                                  subtitle: Text('${f.songs.length} files'),
+                                  onTap: () => Navigator.push(context,
+                                      MaterialPageRoute(builder: (_) =>
+                                          SongListScreen(folder: f))),
+                                );
+                              }),
+                );
+          }
+
+          class SongListScreen extends StatefulWidget {
+            final CustomFolder folder;
+            const SongListScreen({super.key, required this.folder});
+            @override
+            State<SongListScreen> createState() => _SongListScreenState();
+          }
+
+          class _SongListScreenState extends State<SongListScreen> {
+            final _sc = TextEditingController();
+            final Set<int> _sel = {};
+            bool _isSel = false;
+            List<SongModel> _filtered = [];
+
+            @override
+            void initState() {
+              super.initState();
+              _filtered = widget.folder.songs;
+              _sc.addListener(() => setState(() {
+                    _filtered = widget.folder.songs.where((s) => s.title
+                        .toLowerCase().contains(_sc.text.toLowerCase())).toList();
+                  }));
+            }
+
+            @override
+            Widget build(BuildContext context) => Scaffold(
+                  appBar: AppBar(
+                    leading: _isSel
+                        ? IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () =>
+                                setState(() { _sel.clear(); _isSel = false; }))
+                        : null,
+                    title: _isSel
+                        ? Text('${_sel.length} Selected')
+                        : TextField(
+                            controller: _sc,
+                            decoration: InputDecoration(
+                              hintText: 'Search in folder...',
+                              border: InputBorder.none,
+                              suffixIcon: _sc.text.isNotEmpty
+                                  ? IconButton(icon: const Icon(Icons.clear),
+                                      onPressed: () => _sc.clear()) : null,
+                            )),
+                    actions: _isSel
+                        ? [
+                            IconButton(
+                              icon: const Icon(Icons.select_all),
+                              onPressed: () => setState(() =>
+                                  _sel.addAll(Iterable.generate(_filtered.length))),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.play_circle),
+                              onPressed: () => Navigator.push(context,
+                                  MaterialPageRoute(builder: (_) => PlayerScreen(
+                                      songs: _sel.map((i) => _filtered[i]).toList(),
+                                      initialIndex: 0))),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  body: ListView.builder(
+                    itemCount: _filtered.length,
+                    itemBuilder: (_, i) {
+                      final isS = _sel.contains(i);
+                      return ListTile(
+                        tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
+                        leading: Icon(isS ? Icons.check_circle : Icons.music_note,
+                            color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                        title: Text(_filtered[i].title, maxLines: 1),
+                        onLongPress: () =>
+                            setState(() { _sel.add(i); _isSel = true; }),
+                        onTap: () {
+                          if (_isSel) {
+                            setState(() {
+                              if (isS) _sel.remove(i); else _sel.add(i);
+                              _isSel = _sel.isNotEmpty;
+                            });
+                          } else {
+                            Navigator.push(context, MaterialPageRoute(
+                                builder: (_) => PlayerScreen(
+                                    songs: _filtered, initialIndex: i)));
+                          }
+                        },
+                      );
+                    },
+                  ),
+                );
+          }
+
+          class PlayerScreen extends StatefulWidget {
+            final List<SongModel> songs;
+            final int initialIndex;
+            const PlayerScreen(
+                {super.key, required this.songs, required this.initialIndex});
+            @override
+            State<PlayerScreen> createState() => _PlayerScreenState();
+          }
+
+          class _PlayerScreenState extends State<PlayerScreen> {
+            late int _idx;
+            bool _playing = true;
+
+            @override
+            void initState() {
+              super.initState();
+              _idx = widget.initialIndex;
+              startMusic(widget.songs, _idx);
+              _ch.setMethodCallHandler((call) async {
+                if (call.method == 'onSongChanged' && mounted) {
+                  setState(() {
+                    _idx     = call.arguments['index']     as int;
+                    _playing = call.arguments['isPlaying'] as bool;
+                  });
+                }
+              });
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final song = widget.songs[_idx];
+              return Scaffold(
+                appBar: AppBar(title: const Text('Now Playing')),
+                body: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
+                    const SizedBox(height: 30),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(song.title,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          style: GoogleFonts.poppins(
+                              fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(song.artist ?? 'Unknown Artist',
+                        style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                    const SizedBox(height: 40),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.skip_previous, size: 45),
+                          onPressed: _idx > 0
+                              ? () => startMusic(widget.songs, _idx - 1)
+                              : null,
+                        ),
+                        FloatingActionButton.large(
+                          backgroundColor: Colors.blueAccent,
+                          onPressed: () => startMusic(widget.songs, _idx),
+                          child: Icon(
+                              _playing ? Icons.pause : Icons.play_arrow,
+                              size: 50),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.skip_next, size: 45),
+                          onPressed: _idx < widget.songs.length - 1
+                              ? () => startMusic(widget.songs, _idx + 1)
+                              : null,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+          DART
+
+      - name: Build APK
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NKPlayer-v1.0.52
+          path: build/app/outputs/flutter-apk/app-release.apk
