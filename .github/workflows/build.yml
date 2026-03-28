@@ -1,4 +1,4 @@
-name: NKPlayer - Final Playback Fix (v1.0.25)
+name: NKPlayer - Content URI Playback Fix (v1.0.26)
 on: [push]
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
           cat <<EOF > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player.
-          version: 1.0.25+115
+          version: 1.0.26+116
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -386,10 +386,12 @@ jobs:
               try {
                 final playlist = ConcatenatingAudioSource(
                   children: PlayerManager.currentPlaylist.map((s) {
-                    // FIX: Use Uri.file for robust local path handling
-                    final fileUri = Uri.file(s.data);
+                    // FIX: Using MediaStore Content URI (s.uri) to bypass Scoped Storage
+                    // Fallback to Uri.file(s.data) only if s.uri is completely unavailable
+                    final uri = s.uri != null ? Uri.parse(s.uri!) : Uri.file(s.data);
+                    
                     return AudioSource.uri(
-                      fileUri,
+                      uri,
                       tag: MediaItem(
                         id: s.id.toString(),
                         title: s.title,
@@ -402,7 +404,7 @@ jobs:
                 await PlayerManager.player.setAudioSource(playlist, initialIndex: widget.initialIndex);
                 PlayerManager.player.play();
               } catch (e) {
-                debugPrint("Playback Error: $e");
+                debugPrint("Playback Error: \$e");
               }
             }
 
@@ -499,5 +501,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.25
+          name: NKPlayer-v1.0.26
           path: build/app/outputs/flutter-apk/app-release.apk
