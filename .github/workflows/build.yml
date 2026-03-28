@@ -21,7 +21,7 @@ jobs:
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle || true
 
-          # Add androidx.media dependency + fix kotlin stdlib duplicate globally
+          # Add androidx.media dependency + fix kotlin version + fix stdlib duplicate
           python3 -c "
           # 1. app/build.gradle: add media dependency
           path = 'android/app/build.gradle'
@@ -33,11 +33,13 @@ jobs:
           with open(path, 'w') as f:
               f.write(content)
 
-          # 2. root build.gradle: force kotlin-stdlib version globally
-          import os
+          # 2. root build.gradle: upgrade kotlin_version + force stdlib version
           root_path = 'android/build.gradle'
           with open(root_path, 'r') as f:
               root = f.read()
+          # Upgrade Kotlin version to 1.8.22
+          import re
+          root = re.sub(r\"ext\.kotlin_version\s*=\s*['\\\"][^'\\\"]+['\\\"]\", \"ext.kotlin_version = '1.8.22'\", root)
           resolution = '''
           subprojects {
               configurations.all {
@@ -185,9 +187,8 @@ jobs:
               override fun onCreate() {
                   super.onCreate()
                   createNotificationChannel()
-                  mediaSession = MediaSessionCompat(this, "NKPlayer").apply {
-                      isActive = true
-                  }
+                  mediaSession = MediaSessionCompat(this, "NKPlayer")
+                  mediaSession.setActive(true)
               }
 
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
