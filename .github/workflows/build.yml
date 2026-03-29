@@ -556,32 +556,26 @@ jobs:
                   child: Scaffold(
                   appBar: AppBar(
                     title: _searching
-                        ? Row(
-                            children: [
-                              Expanded(
-                                child: ExcludeSemantics(
-                                  child: TextField(
-                                    controller: _sc,
-                                    focusNode: _focus,
-                                    autofocus: true,
-                                    decoration: const InputDecoration(
-                                      hintText: 'Search songs...',
-                                      border: InputBorder.none,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (_sc.text.isNotEmpty)
-                                Semantics(
-                                  label: 'clear search button',
-                                  button: true,
-                                  excludeSemantics: true,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    onPressed: () => _sc.clear(),
-                                  ),
-                                ),
-                            ],
+                        ? TextField(
+                            controller: _sc,
+                            focusNode: _focus,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              hintText: 'Search songs...',
+                              border: InputBorder.none,
+                              suffixIcon: _sc.text.isNotEmpty
+                                  ? Semantics(
+                                      label: 'clear search button',
+                                      button: true,
+                                      container: true,
+                                      excludeSemantics: true,
+                                      child: IconButton(
+                                        icon: const Icon(Icons.clear),
+                                        onPressed: () => _sc.clear(),
+                                      ),
+                                    )
+                                  : null,
+                            ),
                           )
                         : Text('Folders', style: GoogleFonts.poppins()),
                     actions: [
@@ -692,31 +686,25 @@ jobs:
                         : null,
                     title: _isSel
                         ? Text('${_sel.length} Selected')
-                        : Row(
-                            children: [
-                              Expanded(
-                                child: ExcludeSemantics(
-                                  child: TextField(
-                                    controller: _sc,
-                                    focusNode: _focus,
-                                    decoration: const InputDecoration(
-                                      hintText: 'Search in folder...',
-                                      border: InputBorder.none,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (_sc.text.isNotEmpty)
-                                Semantics(
-                                  label: 'clear search button',
-                                  button: true,
-                                  excludeSemantics: true,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    onPressed: () => _sc.clear(),
-                                  ),
-                                ),
-                            ],
+                        : TextField(
+                            controller: _sc,
+                            focusNode: _focus,
+                            decoration: InputDecoration(
+                              hintText: 'Search in folder...',
+                              border: InputBorder.none,
+                              suffixIcon: _sc.text.isNotEmpty
+                                  ? Semantics(
+                                      label: 'clear search button',
+                                      button: true,
+                                      container: true,
+                                      excludeSemantics: true,
+                                      child: IconButton(
+                                        icon: const Icon(Icons.clear),
+                                        onPressed: () => _sc.clear(),
+                                      ),
+                                    )
+                                  : null,
+                            ),
                           ),
                     actions: _isSel
                         ? [
