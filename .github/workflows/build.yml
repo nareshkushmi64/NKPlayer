@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.72)
+name: NKPlayer - Background Playback (v1.0.74)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.72+73
+          version: 1.0.74+75
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -535,12 +535,16 @@ jobs:
                         ? Row(
                             children: [
                               Expanded(
-                                child: TextField(
-                                  controller: _sc,
-                                  autofocus: true,
-                                  decoration: const InputDecoration(
-                                    hintText: 'Search songs...',
-                                    border: InputBorder.none,
+                                child: Semantics(
+                                  label: 'search text field',
+                                  textField: true,
+                                  child: TextField(
+                                    controller: _sc,
+                                    autofocus: true,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Search songs...',
+                                      border: InputBorder.none,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -643,11 +647,15 @@ jobs:
                         : Row(
                             children: [
                               Expanded(
-                                child: TextField(
-                                  controller: _sc,
-                                  decoration: const InputDecoration(
-                                    hintText: 'Search in folder...',
-                                    border: InputBorder.none,
+                                child: Semantics(
+                                  label: 'search text field',
+                                  textField: true,
+                                  child: TextField(
+                                    controller: _sc,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Search in folder...',
+                                      border: InputBorder.none,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -762,7 +770,7 @@ jobs:
             String _fmt(Duration d) {
               final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
               final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-              return '\$m:\$s';
+              return m + ':' + s;
             }
 
             @override
@@ -790,19 +798,19 @@ jobs:
                         style: const TextStyle(color: Colors.grey, fontSize: 14)),
                     const Spacer(),
                     // ── Slider ───────────────────────────────────────────
-                    Semantics(
-                      label: 'seek slider',
-                      slider: true,
-                      excludeSemantics: true,
-                      child: Slider(
-                        value: curSec,
-                        max: maxSec,
-                        onChanged: (v) async {
-                          try {
-                            await _ch.invokeMethod('seek', {'ms': (v * 1000).toInt()});
-                          } catch (_) {}
-                        },
-                      ),
+                    Slider(
+                      value: curSec,
+                      max: maxSec,
+                      semanticFormatterCallback: (v) =>
+                          _fmt(Duration(seconds: v.toInt())),
+                      onChanged: (v) {
+                        setState(() => _pos = Duration(seconds: v.toInt()));
+                      },
+                      onChangeEnd: (v) async {
+                        try {
+                          await _ch.invokeMethod('seek', {'ms': (v * 1000).toInt()});
+                        } catch (_) {}
+                      },
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -873,5 +881,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.72
+          name: NKPlayer-v1.0.74
           path: build/app/outputs/flutter-apk/app-release.apk
