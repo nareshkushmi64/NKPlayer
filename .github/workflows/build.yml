@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.74)
+name: NKPlayer - Background Playback (v1.0.74.1)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.74+75
+          version: 1.0.74.1+75
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -498,6 +498,7 @@ jobs:
 
           class _FolderListScreenState extends State<FolderListScreen> {
             final _sc = TextEditingController();
+            final _focus = FocusNode();
             bool _searching = false;
             List<CustomFolder> _folders = [];
             List<SongModel> _all = [], _filtered = [];
@@ -511,6 +512,26 @@ jobs:
                     _filtered = _all.where((s) => s.title.toLowerCase()
                         .contains(_sc.text.toLowerCase())).toList();
                   }));
+            }
+
+            @override
+            void dispose() {
+              _sc.dispose();
+              _focus.dispose();
+              super.dispose();
+            }
+
+            // Back press: 1st → close keyboard, 2nd → close search
+            bool _handleBack() {
+              if (_searching) {
+                if (_focus.hasFocus) {
+                  _focus.unfocus();
+                  return true;
+                }
+                setState(() { _searching = false; _sc.clear(); });
+                return true;
+              }
+              return false;
             }
 
             Future<void> _load() async {
@@ -529,7 +550,10 @@ jobs:
             }
 
             @override
-            Widget build(BuildContext context) => Scaffold(
+            Widget build(BuildContext context) => PopScope(
+                  canPop: !_searching,
+                  onPopInvoked: (didPop) { if (!didPop) _handleBack(); },
+                  child: Scaffold(
                   appBar: AppBar(
                     title: _searching
                         ? Row(
@@ -540,40 +564,40 @@ jobs:
                                   textField: true,
                                   child: TextField(
                                     controller: _sc,
+                                    focusNode: _focus,
                                     autofocus: true,
-                                    decoration: const InputDecoration(
+                                    decoration: InputDecoration(
                                       hintText: 'Search songs...',
                                       border: InputBorder.none,
+                                      suffixIcon: _sc.text.isNotEmpty
+                                          ? Semantics(
+                                              label: 'clear search button',
+                                              button: true,
+                                              excludeSemantics: true,
+                                              child: IconButton(
+                                                icon: const Icon(Icons.clear),
+                                                onPressed: () => _sc.clear(),
+                                              ),
+                                            )
+                                          : null,
                                     ),
                                   ),
                                 ),
                               ),
-                              if (_sc.text.isNotEmpty)
-                                Semantics(
-                                  label: 'clear search button',
-                                  button: true,
-                                  excludeSemantics: true,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    onPressed: () => _sc.clear(),
-                                  ),
-                                ),
                             ],
                           )
                         : Text('Folders', style: GoogleFonts.poppins()),
                     actions: [
-                      Semantics(
-                        label: 'search button',
-                        button: true,
-                        excludeSemantics: true,
-                        child: IconButton(
-                          icon: Icon(_searching ? Icons.close : Icons.search),
-                          onPressed: () => setState(() {
-                            _searching = !_searching;
-                            if (!_searching) _sc.clear();
-                          }),
+                      if (!_searching)
+                        Semantics(
+                          label: 'search button',
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(
+                            icon: const Icon(Icons.search),
+                            onPressed: () => setState(() => _searching = true),
+                          ),
                         ),
-                      ),
                     ],
                   ),
                   body: _loading
@@ -603,7 +627,7 @@ jobs:
                                           SongListScreen(folder: f))),
                                 );
                               }),
-                );
+                ));
           }
 
           class SongListScreen extends StatefulWidget {
@@ -615,6 +639,7 @@ jobs:
 
           class _SongListScreenState extends State<SongListScreen> {
             final _sc = TextEditingController();
+            final _focus = FocusNode();
             final Set<int> _sel = {};
             bool _isSel = false;
             List<SongModel> _filtered = [];
@@ -630,7 +655,33 @@ jobs:
             }
 
             @override
-            Widget build(BuildContext context) => Scaffold(
+            void dispose() {
+              _sc.dispose();
+              _focus.dispose();
+              super.dispose();
+            }
+
+            bool _handleBack() {
+              if (_isSel) {
+                setState(() { _sel.clear(); _isSel = false; });
+                return true;
+              }
+              if (_focus.hasFocus) {
+                _focus.unfocus();
+                return true;
+              }
+              if (_sc.text.isNotEmpty) {
+                _sc.clear();
+                return true;
+              }
+              return false;
+            }
+
+            @override
+            Widget build(BuildContext context) => PopScope(
+                  canPop: !_isSel && !_focus.hasFocus && _sc.text.isEmpty,
+                  onPopInvoked: (didPop) { if (!didPop) _handleBack(); },
+                  child: Scaffold(
                   appBar: AppBar(
                     leading: _isSel
                         ? Semantics(
@@ -644,32 +695,28 @@ jobs:
                         : null,
                     title: _isSel
                         ? Text('${_sel.length} Selected')
-                        : Row(
-                            children: [
-                              Expanded(
-                                child: Semantics(
-                                  label: 'search text field',
-                                  textField: true,
-                                  child: TextField(
-                                    controller: _sc,
-                                    decoration: const InputDecoration(
-                                      hintText: 'Search in folder...',
-                                      border: InputBorder.none,
-                                    ),
-                                  ),
-                                ),
+                        : Semantics(
+                            label: 'search text field',
+                            textField: true,
+                            child: TextField(
+                              controller: _sc,
+                              focusNode: _focus,
+                              decoration: InputDecoration(
+                                hintText: 'Search in folder...',
+                                border: InputBorder.none,
+                                suffixIcon: _sc.text.isNotEmpty
+                                    ? Semantics(
+                                        label: 'clear search button',
+                                        button: true,
+                                        excludeSemantics: true,
+                                        child: IconButton(
+                                          icon: const Icon(Icons.clear),
+                                          onPressed: () => _sc.clear(),
+                                        ),
+                                      )
+                                    : null,
                               ),
-                              if (_sc.text.isNotEmpty)
-                                Semantics(
-                                  label: 'clear search button',
-                                  button: true,
-                                  excludeSemantics: true,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    onPressed: () => _sc.clear(),
-                                  ),
-                                ),
-                            ],
+                            ),
                           ),
                     actions: _isSel
                         ? [
@@ -724,7 +771,7 @@ jobs:
                       );
                     },
                   ),
-                );
+                ));
           }
 
           class PlayerScreen extends StatefulWidget {
@@ -801,8 +848,10 @@ jobs:
                     Slider(
                       value: curSec,
                       max: maxSec,
-                      semanticFormatterCallback: (v) =>
-                          _fmt(Duration(seconds: v.toInt())),
+                      semanticFormatterCallback: (v) {
+                        final pct = maxSec > 0 ? (v / maxSec * 100).round() : 0;
+                        return pct.toString() + '% ' + _fmt(Duration(seconds: v.toInt()));
+                      },
                       onChanged: (v) {
                         setState(() => _pos = Duration(seconds: v.toInt()));
                       },
@@ -881,5 +930,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.74
+          name: NKPlayer-v1.0.74.1.1
           path: build/app/outputs/flutter-apk/app-release.apk
