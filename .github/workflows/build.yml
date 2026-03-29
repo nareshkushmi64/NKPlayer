@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.74.1)
+name: NKPlayer - Background Playback (v1.0.741)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.74.1+75
+          version: 1.0.741+75
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -930,5 +930,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.74.1.1
+          name: NKPlayer-v1.0.741
           path: build/app/outputs/flutter-apk/app-release.apk
