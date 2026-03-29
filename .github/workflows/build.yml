@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.71)
+name: NKPlayer - Background Playback (v1.0.72)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.71+72
+          version: 1.0.72+73
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -133,6 +133,7 @@ jobs:
                   var currentIndex: Int = 0
                   var playing: Boolean = false
                   var onSongChanged: ((Int, Boolean) -> Unit)? = null
+                  var onPosition: ((Int, Int) -> Unit)? = null
               }
 
               private var mp: MediaPlayer? = null
@@ -166,6 +167,10 @@ jobs:
                       ACTION_PREV -> { if (currentIndex > 0) { currentIndex--; playTrack() } }
                       ACTION_PLAY_PAUSE -> { togglePause() }
                       ACTION_NEXT -> { if (currentIndex < paths.size - 1) { currentIndex++; playTrack() } }
+                      "com.nareshkushmi.nkplayer.SEEK" -> {
+                          val ms = intent?.getIntExtra("seek_ms", 0) ?: 0
+                          mp?.seekTo(ms)
+                      }
                       else -> {
                           val p = intent?.getStringArrayListExtra(EXTRA_PATHS)
                           if (p != null && p.isNotEmpty()) {
@@ -198,7 +203,25 @@ jobs:
                       updateMediaSession(true)
                       onSongChanged?.invoke(currentIndex, true)
                       startForeground(NOTIF_ID, buildNotif())
+                      startPositionUpdater()
                   } catch (e: Exception) { e.printStackTrace() }
+              }
+
+              private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+              private val positionRunnable = object : Runnable {
+                  override fun run() {
+                      mp?.let { m ->
+                          if (m.isPlaying) {
+                              onPosition?.invoke(m.currentPosition, m.duration)
+                          }
+                      }
+                      handler.postDelayed(this, 500)
+                  }
+              }
+
+              private fun startPositionUpdater() {
+                  handler.removeCallbacks(positionRunnable)
+                  handler.post(positionRunnable)
               }
 
               private fun togglePause() {
@@ -211,6 +234,7 @@ jobs:
               }
 
               private fun stopAll() {
+                  handler.removeCallbacks(positionRunnable)
                   mp?.apply { if (isPlaying) stop(); release() }; mp = null
                   playing = false
                   stopForeground(true)
@@ -292,6 +316,7 @@ jobs:
               }
 
               override fun onDestroy() {
+                  handler.removeCallbacks(positionRunnable)
                   mp?.release(); mp = null
                   mediaSession?.isActive = false
                   mediaSession?.release()
@@ -325,6 +350,13 @@ jobs:
                       }
                   }
 
+                  MusicService.onPosition = { pos, dur ->
+                      runOnUiThread {
+                          ch.invokeMethod("onPosition", mapOf("ms" to pos))
+                          ch.invokeMethod("onDuration", mapOf("ms" to dur))
+                      }
+                  }
+
                   ch.setMethodCallHandler { call, result ->
                       when (call.method) {
                           "start" -> {
@@ -351,6 +383,14 @@ jobs:
                           "togglePlayPause" -> {
                               startService(Intent(this, MusicService::class.java).apply {
                                   action = MusicService.ACTION_PLAY_PAUSE })
+                              result.success(null)
+                          }
+                          "seek" -> {
+                              val ms = call.argument<Int>("ms") ?: 0
+                              startService(Intent(this, MusicService::class.java).apply {
+                                  action = "com.nareshkushmi.nkplayer.SEEK"
+                                  putExtra("seek_ms", ms)
+                              })
                               result.success(null)
                           }
                           else -> result.notImplemented()
@@ -492,20 +532,30 @@ jobs:
             Widget build(BuildContext context) => Scaffold(
                   appBar: AppBar(
                     title: _searching
-                        ? TextField(
-                            controller: _sc,
-                            autofocus: true,
-                            decoration: InputDecoration(
-                              hintText: 'Search songs...',
-                              border: InputBorder.none,
-                              suffixIcon: _sc.text.isNotEmpty
-                                  ? Semantics(
-                                      label: 'clear search button',
-                                      button: true,
-                                      excludeSemantics: true,
-                                      child: IconButton(icon: const Icon(Icons.clear),
-                                          onPressed: () => _sc.clear())) : null,
-                            ))
+                        ? Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _sc,
+                                  autofocus: true,
+                                  decoration: const InputDecoration(
+                                    hintText: 'Search songs...',
+                                    border: InputBorder.none,
+                                  ),
+                                ),
+                              ),
+                              if (_sc.text.isNotEmpty)
+                                Semantics(
+                                  label: 'clear search button',
+                                  button: true,
+                                  excludeSemantics: true,
+                                  child: IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () => _sc.clear(),
+                                  ),
+                                ),
+                            ],
+                          )
                         : Text('Folders', style: GoogleFonts.poppins()),
                     actions: [
                       Semantics(
@@ -590,19 +640,29 @@ jobs:
                         : null,
                     title: _isSel
                         ? Text('${_sel.length} Selected')
-                        : TextField(
-                            controller: _sc,
-                            decoration: InputDecoration(
-                              hintText: 'Search in folder...',
-                              border: InputBorder.none,
-                              suffixIcon: _sc.text.isNotEmpty
-                                  ? Semantics(
-                                      label: 'clear search button',
-                                      button: true,
-                                      excludeSemantics: true,
-                                      child: IconButton(icon: const Icon(Icons.clear),
-                                          onPressed: () => _sc.clear())) : null,
-                            )),
+                        : Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _sc,
+                                  decoration: const InputDecoration(
+                                    hintText: 'Search in folder...',
+                                    border: InputBorder.none,
+                                  ),
+                                ),
+                              ),
+                              if (_sc.text.isNotEmpty)
+                                Semantics(
+                                  label: 'clear search button',
+                                  button: true,
+                                  excludeSemantics: true,
+                                  child: IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () => _sc.clear(),
+                                  ),
+                                ),
+                            ],
+                          ),
                     actions: _isSel
                         ? [
                             Semantics(
@@ -671,6 +731,8 @@ jobs:
           class _PlayerScreenState extends State<PlayerScreen> {
             late int _idx;
             bool _playing = true;
+            Duration _pos = Duration.zero;
+            Duration _dur = Duration.zero;
 
             @override
             void initState() {
@@ -678,25 +740,43 @@ jobs:
               _idx = widget.initialIndex;
               startMusic(widget.songs, _idx);
               _ch.setMethodCallHandler((call) async {
-                if (call.method == 'onSongChanged' && mounted) {
+                if (!mounted) return;
+                if (call.method == 'onSongChanged') {
                   setState(() {
                     _idx     = call.arguments['index']     as int;
                     _playing = call.arguments['isPlaying'] as bool;
+                    _pos = Duration.zero;
+                  });
+                } else if (call.method == 'onPosition') {
+                  setState(() {
+                    _pos = Duration(milliseconds: call.arguments['ms'] as int);
+                  });
+                } else if (call.method == 'onDuration') {
+                  setState(() {
+                    _dur = Duration(milliseconds: call.arguments['ms'] as int);
                   });
                 }
               });
             }
 
+            String _fmt(Duration d) {
+              final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+              final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+              return '\$m:\$s';
+            }
+
             @override
             Widget build(BuildContext context) {
               final song = widget.songs[_idx];
+              final maxSec = _dur.inSeconds.toDouble() > 0 ? _dur.inSeconds.toDouble() : 1.0;
+              final curSec = _pos.inSeconds.toDouble().clamp(0.0, maxSec);
               return Scaffold(
                 appBar: AppBar(title: const Text('Now Playing')),
                 body: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    const Spacer(),
                     const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 24),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(song.title,
@@ -708,7 +788,36 @@ jobs:
                     const SizedBox(height: 8),
                     Text(song.artist ?? 'Unknown Artist',
                         style: const TextStyle(color: Colors.grey, fontSize: 14)),
-                    const SizedBox(height: 40),
+                    const Spacer(),
+                    // ── Slider ───────────────────────────────────────────
+                    Semantics(
+                      label: 'seek slider',
+                      slider: true,
+                      excludeSemantics: true,
+                      child: Slider(
+                        value: curSec,
+                        max: maxSec,
+                        onChanged: (v) async {
+                          try {
+                            await _ch.invokeMethod('seek', {'ms': (v * 1000).toInt()});
+                          } catch (_) {}
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(_fmt(_pos),
+                              style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                          Text(_fmt(_dur),
+                              style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    // ── Controls ─────────────────────────────────────────
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
@@ -748,6 +857,7 @@ jobs:
                         ),
                       ],
                     ),
+                    const SizedBox(height: 40),
                   ],
                 ),
               );
@@ -763,5 +873,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.71
+          name: NKPlayer-v1.0.72
           path: build/app/outputs/flutter-apk/app-release.apk
