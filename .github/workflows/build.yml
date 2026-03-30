@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.78)
+name: NKPlayer - Background Playback (v1.0.80)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.78+79
+          version: 1.0.80+81
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -109,6 +109,9 @@ jobs:
 
           import android.app.*
           import android.content.Intent
+          import android.media.AudioAttributes
+          import android.media.AudioFocusRequest
+          import android.media.AudioManager
           import android.media.MediaPlayer
           import android.media.session.MediaSession
           import android.media.session.PlaybackState
@@ -143,12 +146,42 @@ jobs:
               private var artists: ArrayList<String> = arrayListOf()
               private var title  = "NKPlayer"
               private var artist = "Unknown"
+              private var isDucked = false
+
+              private lateinit var audioManager: AudioManager
+              private var focusRequest: AudioFocusRequest? = null
+
+              // Audio focus listener — handles ducking for screen reader
+              private val focusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+                  when (focusChange) {
+                      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                          // Screen reader speaking — lower volume to 20%
+                          mp?.setVolume(0.2f, 0.2f)
+                          isDucked = true
+                      }
+                      AudioManager.AUDIOFOCUS_GAIN -> {
+                          // Screen reader done — restore full volume
+                          mp?.setVolume(1.0f, 1.0f)
+                          isDucked = false
+                      }
+                      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                          // Another app needs audio briefly — pause
+                          if (mp?.isPlaying == true) togglePause()
+                      }
+                      AudioManager.AUDIOFOCUS_LOSS -> {
+                          // Another app took audio permanently — pause
+                          if (mp?.isPlaying == true) togglePause()
+                      }
+                  }
+              }
 
               override fun onBind(intent: Intent?): IBinder? = null
 
               override fun onCreate() {
                   super.onCreate()
                   createChannel()
+                  audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+                  requestAudioFocus()
                   mediaSession = MediaSession(this, "NKPlayer").apply {
                       setCallback(object : MediaSession.Callback() {
                           override fun onPlay()         { if (mp?.isPlaying == false) togglePause() }
@@ -239,8 +272,40 @@ jobs:
                   updateNotif()
               }
 
+              private fun requestAudioFocus() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val attrs = AudioAttributes.Builder()
+                          .setUsage(AudioAttributes.USAGE_MEDIA)
+                          .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                          .build()
+                      focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                          .setAudioAttributes(attrs)
+                          .setWillPauseWhenDucked(false)   // we handle ducking manually
+                          .setOnAudioFocusChangeListener(focusListener)
+                          .build()
+                      audioManager.requestAudioFocus(focusRequest!!)
+                  } else {
+                      @Suppress("DEPRECATION")
+                      audioManager.requestAudioFocus(
+                          focusListener,
+                          AudioManager.STREAM_MUSIC,
+                          AudioManager.AUDIOFOCUS_GAIN
+                      )
+                  }
+              }
+
+              private fun abandonAudioFocus() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+                  } else {
+                      @Suppress("DEPRECATION")
+                      audioManager.abandonAudioFocus(focusListener)
+                  }
+              }
+
               private fun stopAll() {
                   handler.removeCallbacks(positionRunnable)
+                  abandonAudioFocus()
                   mp?.apply { if (isPlaying) stop(); release() }; mp = null
                   playing = false
                   stopForeground(true)
@@ -323,6 +388,7 @@ jobs:
 
               override fun onDestroy() {
                   handler.removeCallbacks(positionRunnable)
+                  abandonAudioFocus()
                   mp?.release(); mp = null
                   mediaSession?.isActive = false
                   mediaSession?.release()
@@ -946,9 +1012,24 @@ jobs:
                       label: 'more options button',
                       button: true,
                       excludeSemantics: true,
-                      child: IconButton(
+                      child: PopupMenuButton<String>(
                         icon: const Icon(Icons.more_vert),
-                        onPressed: _showSpeedSheet,
+                        tooltip: 'More options',
+                        onSelected: (value) {
+                          if (value == 'speed') _showSpeedSheet();
+                        },
+                        itemBuilder: (ctx) => [
+                          const PopupMenuItem(
+                            value: 'speed',
+                            child: Row(
+                              children: [
+                                Icon(Icons.speed, color: Colors.blueAccent),
+                                SizedBox(width: 12),
+                                Text('Playback Speed'),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -1056,5 +1137,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.78
+          name: NKPlayer-v1.0.80
           path: build/app/outputs/flutter-apk/app-release.apk
