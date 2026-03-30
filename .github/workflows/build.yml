@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.80)
+name: NKPlayer - Background Playback (v1.0.82)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.80+81
+          version: 1.0.82+83
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -147,29 +147,52 @@ jobs:
               private var title  = "NKPlayer"
               private var artist = "Unknown"
               private var isDucked = false
+              private var currentVolume = 1.0f
+              private val duckHandler = android.os.Handler(android.os.Looper.getMainLooper())
+              private var fadeRunnable: Runnable? = null
 
               private lateinit var audioManager: AudioManager
               private var focusRequest: AudioFocusRequest? = null
+
+              // Fade volume smoothly: from → to in ~150ms (15 steps × 10ms)
+              private fun fadeVolume(from: Float, to: Float) {
+                  fadeRunnable?.let { duckHandler.removeCallbacks(it) }
+                  val steps = 8
+                  val stepSize = (to - from) / steps
+                  var step = 0
+                  fadeRunnable = object : Runnable {
+                      override fun run() {
+                          if (step >= steps) {
+                              currentVolume = to
+                              mp?.setVolume(to, to)
+                              return
+                          }
+                          currentVolume = from + stepSize * step
+                          mp?.setVolume(currentVolume, currentVolume)
+                          step++
+                          duckHandler.postDelayed(this, 5)
+                      }
+                  }
+                  duckHandler.post(fadeRunnable!!)
+              }
 
               // Audio focus listener — handles ducking for screen reader
               private val focusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
                   when (focusChange) {
                       AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                          // Screen reader speaking — lower volume to 20%
-                          mp?.setVolume(0.2f, 0.2f)
+                          // Screen reader speaking — fast fade to 8%
                           isDucked = true
+                          fadeVolume(currentVolume, 0.2f)
                       }
                       AudioManager.AUDIOFOCUS_GAIN -> {
-                          // Screen reader done — restore full volume
-                          mp?.setVolume(1.0f, 1.0f)
+                          // Screen reader done — fast fade back to 100%
                           isDucked = false
+                          fadeVolume(currentVolume, 1.0f)
                       }
                       AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                          // Another app needs audio briefly — pause
                           if (mp?.isPlaying == true) togglePause()
                       }
                       AudioManager.AUDIOFOCUS_LOSS -> {
-                          // Another app took audio permanently — pause
                           if (mp?.isPlaying == true) togglePause()
                       }
                   }
@@ -232,6 +255,8 @@ jobs:
                       mp = MediaPlayer().apply {
                           setDataSource(paths[currentIndex])
                           prepare()
+                          // Apply current volume in case ducked
+                          setVolume(currentVolume, currentVolume)
                           start()
                           setOnCompletionListener {
                               if (currentIndex < paths.size - 1) { currentIndex++; playTrack() }
@@ -388,6 +413,7 @@ jobs:
 
               override fun onDestroy() {
                   handler.removeCallbacks(positionRunnable)
+                  fadeRunnable?.let { duckHandler.removeCallbacks(it) }
                   abandonAudioFocus()
                   mp?.release(); mp = null
                   mediaSession?.isActive = false
@@ -1137,5 +1163,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.80
+          name: NKPlayer-v1.0.82
           path: build/app/outputs/flutter-apk/app-release.apk
