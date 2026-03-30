@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.741)
+name: NKPlayer - Background Playback (v1.0.78)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.741+75
+          version: 1.0.78+79
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -170,6 +170,12 @@ jobs:
                       "com.nareshkushmi.nkplayer.SEEK" -> {
                           val ms = intent?.getIntExtra("seek_ms", 0) ?: 0
                           mp?.seekTo(ms)
+                      }
+                      "com.nareshkushmi.nkplayer.SPEED" -> {
+                          val speed = intent?.getFloatExtra("speed", 1.0f) ?: 1.0f
+                          if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                              mp?.playbackParams = mp?.playbackParams?.setSpeed(speed) ?: return START_STICKY
+                          }
                       }
                       else -> {
                           val p = intent?.getStringArrayListExtra(EXTRA_PATHS)
@@ -393,6 +399,14 @@ jobs:
                               })
                               result.success(null)
                           }
+                          "setSpeed" -> {
+                              val speed = (call.argument<Double>("speed") ?: 1.0).toFloat()
+                              startService(Intent(this, MusicService::class.java).apply {
+                                  action = "com.nareshkushmi.nkplayer.SPEED"
+                                  putExtra("speed", speed)
+                              })
+                              result.success(null)
+                          }
                           else -> result.notImplemented()
                       }
                   }
@@ -429,6 +443,10 @@ jobs:
 
           Future<void> togglePlayPause() async {
             try { await _ch.invokeMethod('togglePlayPause'); } catch (_) {}
+          }
+
+          Future<void> setPlaybackSpeed(double speed) async {
+            try { await _ch.invokeMethod('setSpeed', {'speed': speed}); } catch (_) {}
           }
 
           void main() {
@@ -776,6 +794,7 @@ jobs:
             bool _playing = true;
             Duration _pos = Duration.zero;
             Duration _dur = Duration.zero;
+            double _speed = 1.0;
 
             @override
             void initState() {
@@ -808,13 +827,132 @@ jobs:
               return m + ':' + s;
             }
 
+            void _showSpeedSheet() {
+              // slider: 0.0–1.0 maps to 0.5x–2x, default 0.5 = 1x
+              double pendingSpeed = _speed;
+              showModalBottomSheet(
+                context: context,
+                backgroundColor: const Color(0xFF1E1E1E),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                builder: (ctx) => StatefulBuilder(
+                  builder: (ctx, setSheetState) {
+                    // Convert speed (0.5–2.0) to slider value (0.0–1.0)
+                    final sliderVal = (pendingSpeed - 0.5) / 1.5;
+                    final pct = (sliderVal * 100).round();
+                    final speedLabel = pendingSpeed.toStringAsFixed(2) + 'x';
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Title
+                          Text('Playback Speed',
+                              style: GoogleFonts.poppins(
+                                  fontSize: 18, fontWeight: FontWeight.bold,
+                                  color: Colors.white)),
+                          const SizedBox(height: 4),
+                          // Current speed label
+                          Text(speedLabel,
+                              style: TextStyle(
+                                  fontSize: 28, fontWeight: FontWeight.bold,
+                                  color: Colors.blueAccent)),
+                          const SizedBox(height: 8),
+                          // Slow / Fast labels
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: const [
+                              Text('0.5x Slow', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                              Text('2x Fast',   style: TextStyle(color: Colors.grey, fontSize: 12)),
+                            ],
+                          ),
+                          // Slider — 50% = 1x
+                          Semantics(
+                            label: 'playback speed slider',
+                            slider: true,
+                            value: pct.toString() + '%',
+                            child: Slider(
+                              value: sliderVal,
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: 30,
+                              semanticFormatterCallback: (v) {
+                                final p = (v * 100).round();
+                                return p.toString() + '%';
+                              },
+                              onChanged: (v) {
+                                setSheetState(() {
+                                  pendingSpeed = 0.5 + v * 1.5;
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          // Apply / Cancel buttons
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Semantics(
+                                  label: 'cancel button',
+                                  button: true,
+                                  excludeSemantics: true,
+                                  child: OutlinedButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('Cancel',
+                                        style: TextStyle(color: Colors.grey)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Semantics(
+                                  label: 'apply button',
+                                  button: true,
+                                  excludeSemantics: true,
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.blueAccent),
+                                    onPressed: () async {
+                                      setState(() => _speed = pendingSpeed);
+                                      await setPlaybackSpeed(pendingSpeed);
+                                      if (ctx.mounted) Navigator.pop(ctx);
+                                    },
+                                    child: const Text('Apply',
+                                        style: TextStyle(color: Colors.white)),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              );
+            }
+
             @override
             Widget build(BuildContext context) {
               final song = widget.songs[_idx];
               final maxSec = _dur.inSeconds.toDouble() > 0 ? _dur.inSeconds.toDouble() : 1.0;
               final curSec = _pos.inSeconds.toDouble().clamp(0.0, maxSec);
               return Scaffold(
-                appBar: AppBar(title: const Text('Now Playing')),
+                appBar: AppBar(
+                  title: const Text('Now Playing'),
+                  actions: [
+                    Semantics(
+                      label: 'more options button',
+                      button: true,
+                      excludeSemantics: true,
+                      child: IconButton(
+                        icon: const Icon(Icons.more_vert),
+                        onPressed: _showSpeedSheet,
+                      ),
+                    ),
+                  ],
+                ),
                 body: Column(
                   children: [
                     const Spacer(),
@@ -918,5 +1056,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.741
+          name: NKPlayer-v1.0.78
           path: build/app/outputs/flutter-apk/app-release.apk
