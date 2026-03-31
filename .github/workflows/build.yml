@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.88)
+name: NKPlayer - Background Playback (v1.0.91)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.88+89
+          version: 1.0.91+92
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -47,6 +47,7 @@ jobs:
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
             device_info_plus: ^10.1.0
+            share_plus: ^7.2.2
           flutter:
             uses-material-design: true
           PUBSPEC
@@ -571,8 +572,18 @@ jobs:
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
+          import 'package:share_plus/share_plus.dart';
 
           const _ch = MethodChannel('com.nareshkushmi.nkplayer/music');
+
+          // Format milliseconds → "mm:ss"
+          String fmtMs(int? ms) {
+            if (ms == null || ms <= 0) return '--:--';
+            final d = Duration(milliseconds: ms);
+            final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+            final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+            return m + ':' + s;
+          }
 
           Future<void> startMusic(List<SongModel> songs, int index) async {
             try {
@@ -1033,6 +1044,201 @@ jobs:
               super.dispose();
             }
 
+            // More options for a single song
+            void _showSongOptions(BuildContext context, SongModel song) {
+              showModalBottomSheet(
+                context: context,
+                backgroundColor: const Color(0xFF1E1E1E),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                builder: (ctx) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Title
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Text(song.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 15)),
+                      ),
+                      const Divider(height: 1),
+                      // Copy
+                      Semantics(
+                        label: 'copy button',
+                        button: true,
+                        excludeSemantics: true,
+                        child: ListTile(
+                          leading: const Icon(Icons.copy, color: Colors.blueAccent),
+                          title: const Text('Copy to folder'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _pickFolderAndOperate(context, song, 'copy');
+                          },
+                        ),
+                      ),
+                      // Move
+                      Semantics(
+                        label: 'move button',
+                        button: true,
+                        excludeSemantics: true,
+                        child: ListTile(
+                          leading: const Icon(Icons.drive_file_move,
+                              color: Colors.orange),
+                          title: const Text('Move to folder'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _pickFolderAndOperate(context, song, 'move');
+                          },
+                        ),
+                      ),
+                      // Share
+                      Semantics(
+                        label: 'share button',
+                        button: true,
+                        excludeSemantics: true,
+                        child: ListTile(
+                          leading: const Icon(Icons.share, color: Colors.green),
+                          title: const Text('Share'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            Share.shareXFiles([XFile(song.data)],
+                                text: song.title);
+                          },
+                        ),
+                      ),
+                      // Delete
+                      Semantics(
+                        label: 'delete button',
+                        button: true,
+                        excludeSemantics: true,
+                        child: ListTile(
+                          leading: const Icon(Icons.delete, color: Colors.red),
+                          title: const Text('Delete',
+                              style: TextStyle(color: Colors.red)),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _confirmDelete(context, song);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            // Pick destination folder then copy/move
+            Future<void> _pickFolderAndOperate(
+                BuildContext context, SongModel song, String op) async {
+              // Show folder list to pick destination
+              final folders = <String>{};
+              for (final s in widget.folder.songs) {
+                if (s.data.isNotEmpty) {
+                  folders.add(File(s.data).parent.path);
+                }
+              }
+              // Also show all available parent paths
+              final allFolders = _filtered.map((s) =>
+                  File(s.data).parent.path).toSet().toList();
+
+              if (!context.mounted) return;
+              final dest = await showDialog<String>(
+                context: context,
+                builder: (dctx) => AlertDialog(
+                  backgroundColor: const Color(0xFF1E1E1E),
+                  title: Text(op == 'copy' ? 'Copy to folder' : 'Move to folder'),
+                  content: SizedBox(
+                    width: double.maxFinite,
+                    height: 300,
+                    child: ListView.builder(
+                      itemCount: allFolders.length,
+                      itemBuilder: (_, i) {
+                        final folderPath = allFolders[i];
+                        final folderName = folderPath.split('/').last;
+                        return ListTile(
+                          leading: const Icon(Icons.folder, color: Colors.amber),
+                          title: Text(folderName),
+                          onTap: () => Navigator.pop(dctx, folderPath),
+                        );
+                      },
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dctx),
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+              );
+              if (dest == null || !context.mounted) return;
+
+              try {
+                final srcFile = File(song.data);
+                final destFile = File(dest + '/' + srcFile.uri.pathSegments.last);
+                if (op == 'copy') {
+                  await srcFile.copy(destFile.path);
+                  if (context.mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied successfully')));
+                } else {
+                  await srcFile.rename(destFile.path);
+                  setState(() {
+                    _filtered.removeWhere((s) => s.data == song.data);
+                  });
+                  if (context.mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Moved successfully')));
+                }
+              } catch (e) {
+                if (context.mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error: $e')));
+              }
+            }
+
+            // Confirm and delete
+            Future<void> _confirmDelete(BuildContext context, SongModel song) async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (dctx) => AlertDialog(
+                  backgroundColor: const Color(0xFF1E1E1E),
+                  title: const Text('Delete'),
+                  content: Text('Delete "${song.title}"?
+This cannot be undone.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dctx, false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(dctx, true),
+                      child: const Text('Delete',
+                          style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed != true || !context.mounted) return;
+              try {
+                await File(song.data).delete();
+                setState(() {
+                  _filtered.removeWhere((s) => s.data == song.data);
+                });
+                if (context.mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Deleted successfully')));
+              } catch (e) {
+                if (context.mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Cannot delete: $e')));
+              }
+            }
+
             bool _handleBack() {
               if (_isSel) {
                 setState(() { _sel.clear(); _isSel = false; });
@@ -1126,26 +1332,24 @@ jobs:
                         final folderName = widget.folder.name;
                         final last = await LastPlayedService.load(folder: folderName);
                         if (last == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('No last played in this folder.')));
+                          if (context.mounted)
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('No last played in this folder.')));
                           return;
                         }
                         final path = last['path'] as String;
+                        final ms   = last['ms']   as int;
                         final song = widget.folder.songs.firstWhere(
                           (s) => s.data == path,
                           orElse: () => widget.folder.songs.first,
                         );
                         final idx = widget.folder.songs.indexOf(song);
-                        await startMusic(widget.folder.songs, idx);
-                        final ms = last['ms'] as int;
-                        if (ms > 0) {
-                          await Future.delayed(const Duration(milliseconds: 500));
-                          await _ch.invokeMethod('seek', {'ms': ms});
-                        }
                         if (context.mounted)
                           Navigator.push(context, MaterialPageRoute(
                               builder: (_) => PlayerScreen(
-                                  songs: widget.folder.songs, initialIndex: idx)));
+                                  songs: widget.folder.songs,
+                                  initialIndex: idx,
+                                  seekOnStartMs: ms)));
                       },
                     ),
                   ),
@@ -1153,6 +1357,7 @@ jobs:
                     itemCount: _filtered.length,
                     itemBuilder: (_, i) {
                       final isS = _sel.contains(i);
+                      final song = _filtered[i];
                       return ValueListenableBuilder<bool>(
                         valueListenable: showPositionNotifier,
                         builder: (ctx, showPos, _) => ListTile(
@@ -1160,8 +1365,22 @@ jobs:
                           leading: Icon(isS ? Icons.check_circle : Icons.music_note,
                               color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
                           title: Text(showPos
-                              ? _filtered[i].title + '  ' + (i + 1).toString() + ' of ' + _filtered.length.toString()
-                              : _filtered[i].title, maxLines: 1),
+                              ? song.title + '  ' + (i + 1).toString() + ' of ' + _filtered.length.toString()
+                              : song.title, maxLines: 1),
+                          subtitle: Text(fmtMs(song.duration),
+                              style: const TextStyle(
+                                  color: Colors.grey, fontSize: 12)),
+                          trailing: _isSel ? null : Semantics(
+                            label: 'more options button',
+                            button: true,
+                            excludeSemantics: true,
+                            child: IconButton(
+                              icon: const Icon(Icons.more_vert,
+                                  color: Colors.grey),
+                              onPressed: () =>
+                                  _showSongOptions(context, song),
+                            ),
+                          ),
                           onLongPress: () =>
                               setState(() { _sel.add(i); _isSel = true; }),
                           onTap: () {
@@ -1484,5 +1703,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.88
+          name: NKPlayer-v1.0.91
           path: build/app/outputs/flutter-apk/app-release.apk
