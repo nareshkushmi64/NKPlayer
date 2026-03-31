@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.86)
+name: NKPlayer - Background Playback (v1.0.87)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.86+87
+          version: 1.0.87+88
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -670,6 +670,59 @@ jobs:
             CustomFolder({required this.name, required this.songs});
           }
 
+          // ── Settings Screen ──────────────────────────────────────────────────
+          class SettingsScreen extends StatelessWidget {
+            const SettingsScreen({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: const Text('Settings'),
+                ),
+                body: ValueListenableBuilder<bool>(
+                  valueListenable: showPositionNotifier,
+                  builder: (ctx, showPos, _) => ListView(
+                    children: [
+                      // ── List Settings heading ───────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
+                        child: Text(
+                          'List Settings',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[400],
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      // ── Show item position toggle ───────────────────────
+                      Semantics(
+                        label: 'show item position, ' + (showPos ? 'checked' : 'not checked'),
+                        toggled: showPos,
+                        excludeSemantics: true,
+                        child: SwitchListTile(
+                          title: const Text('Show item position'),
+                          subtitle: const Text(
+                            'e.g. Song Name  1 of 25',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                          value: showPos,
+                          activeColor: Colors.blueAccent,
+                          onChanged: (val) {
+                            showPositionNotifier.value = val;
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+          }
+
           class FolderListScreen extends StatefulWidget {
             const FolderListScreen({super.key});
             @override
@@ -718,53 +771,8 @@ jobs:
             }
 
             void _showSettings(BuildContext context) {
-              showModalBottomSheet(
-                context: context,
-                backgroundColor: const Color(0xFF1E1E1E),
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                ),
-                builder: (ctx) => ValueListenableBuilder<bool>(
-                  valueListenable: showPositionNotifier,
-                  builder: (ctx, showPos, _) => Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Settings',
-                            style: GoogleFonts.poppins(
-                                fontSize: 18, fontWeight: FontWeight.bold,
-                                color: Colors.white)),
-                        const SizedBox(height: 16),
-                        Text('List Settings',
-                            style: TextStyle(
-                                fontSize: 13, color: Colors.grey[400],
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 0.8)),
-                        const Divider(color: Colors.grey),
-                        Semantics(
-                          label: 'show item position toggle, ' + (showPos ? 'checked' : 'not checked'),
-                          button: true,
-                          excludeSemantics: true,
-                          child: SwitchListTile(
-                            title: const Text('Show item position',
-                                style: TextStyle(color: Colors.white)),
-                            subtitle: const Text('e.g. Song Name  1 of 25',
-                                style: TextStyle(color: Colors.grey, fontSize: 12)),
-                            value: showPos,
-                            activeColor: Colors.blueAccent,
-                            contentPadding: EdgeInsets.zero,
-                            onChanged: (val) {
-                              showPositionNotifier.value = val;
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
+              Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => const SettingsScreen()));
             }
 
             Future<void> _load() async {
@@ -958,26 +966,24 @@ jobs:
                     onPressed: () async {
                       final last = await LastPlayedService.load();
                       if (last == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('No last played found.')));
+                        if (context.mounted)
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('No last played found.')));
                         return;
                       }
                       final path = last['path'] as String;
-                      // Find song in all songs
+                      final ms   = last['ms']   as int;
                       final song = _all.firstWhere(
                         (s) => s.data == path,
                         orElse: () => _all.first,
                       );
                       final idx = _all.indexOf(song);
-                      await startMusic(_all, idx);
-                      final ms = last['ms'] as int;
-                      if (ms > 0) {
-                        await Future.delayed(const Duration(milliseconds: 500));
-                        await _ch.invokeMethod('seek', {'ms': ms});
-                      }
                       if (context.mounted)
                         Navigator.push(context, MaterialPageRoute(
-                            builder: (_) => PlayerScreen(songs: _all, initialIndex: idx)));
+                            builder: (_) => PlayerScreen(
+                                songs: _all,
+                                initialIndex: idx,
+                                seekOnStartMs: ms)));
                     },
                   ),
                 ),
@@ -1168,8 +1174,13 @@ jobs:
           class PlayerScreen extends StatefulWidget {
             final List<SongModel> songs;
             final int initialIndex;
-            const PlayerScreen(
-                {super.key, required this.songs, required this.initialIndex});
+            final int seekOnStartMs;
+            const PlayerScreen({
+              super.key,
+              required this.songs,
+              required this.initialIndex,
+              this.seekOnStartMs = 0,
+            });
             @override
             State<PlayerScreen> createState() => _PlayerScreenState();
           }
@@ -1180,6 +1191,7 @@ jobs:
             Duration _pos = Duration.zero;
             Duration _dur = Duration.zero;
             double _speed = 1.0;
+            bool _seekDone = false;
 
             @override
             void initState() {
@@ -1202,9 +1214,13 @@ jobs:
                   final ms = call.arguments['ms'] as int;
                   _saveLastPlayed(widget.songs, _idx, ms);
                 } else if (call.method == 'onDuration') {
-                  setState(() {
-                    _dur = Duration(milliseconds: call.arguments['ms'] as int);
-                  });
+                  final durMs = call.arguments['ms'] as int;
+                  setState(() { _dur = Duration(milliseconds: durMs); });
+                  // Seek to saved position once duration is known (song is ready)
+                  if (!_seekDone && widget.seekOnStartMs > 0 && durMs > 0) {
+                    _seekDone = true;
+                    await _ch.invokeMethod('seek', {'ms': widget.seekOnStartMs});
+                  }
                 }
               });
             }
@@ -1459,5 +1475,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.86
+          name: NKPlayer-v1.0.87
           path: build/app/outputs/flutter-apk/app-release.apk
