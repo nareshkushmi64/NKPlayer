@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.93)
+name: NKPlayer - Background Playback (v1.0.94)
 on: [push]
 
 jobs:
@@ -28,17 +28,7 @@ jobs:
           import re
           c = re.sub(r'kotlin-gradle-plugin:[0-9.]+', 'kotlin-gradle-plugin:1.8.22', c)
           c = re.sub(r\"ext\.kotlin_version\s*=\s*'[^']+'\", \"ext.kotlin_version = '1.8.22'\", c)
-          res = '''
-subprojects {
-    configurations.all {
-        resolutionStrategy {
-            force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
-            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
-            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
-        }
-    }
-}
-'''
+          res = '\nsubprojects {\n    configurations.all {\n        resolutionStrategy {\n            force (\"org.jetbrains.kotlin:kotlin-stdlib:1.8.22\")\n            force (\"org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22\")\n            force (\"org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22\")\n        }\n    }\n}\n'
           if 'resolutionStrategy' not in c:
               c = c + res
           with open(path, 'w') as f: f.write(c)
@@ -49,7 +39,7 @@ subprojects {
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.93+94
+          version: 1.0.94+95
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -1681,5 +1671,5 @@ subprojects {
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.93
+          name: NKPlayer-v1.0.94
           path: build/app/outputs/flutter-apk/app-release.apk
