@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.82)
+name: NKPlayer - Background Playback (v1.0.86)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.82+83
+          version: 1.0.86+87
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -47,6 +47,7 @@ jobs:
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
             device_info_plus: ^10.1.0
+            shared_preferences: ^2.2.3
           flutter:
             uses-material-design: true
           PUBSPEC
@@ -137,6 +138,7 @@ jobs:
                   var playing: Boolean = false
                   var onSongChanged: ((Int, Boolean) -> Unit)? = null
                   var onPosition: ((Int, Int) -> Unit)? = null
+                  var onPauseSave: ((Int, Int) -> Unit)? = null  // (posMs, totalMs)
               }
 
               private var mp: MediaPlayer? = null
@@ -290,8 +292,15 @@ jobs:
 
               private fun togglePause() {
                   val m = mp ?: return
-                  if (m.isPlaying) { m.pause(); playing = false }
-                  else             { m.start(); playing = true  }
+                  if (m.isPlaying) {
+                      m.pause()
+                      playing = false
+                      // Save exact pause position
+                      onPauseSave?.invoke(m.currentPosition, m.duration)
+                  } else {
+                      m.start()
+                      playing = true
+                  }
                   updateMediaSession(playing)
                   onSongChanged?.invoke(currentIndex, playing)
                   updateNotif()
@@ -330,8 +339,14 @@ jobs:
 
               private fun stopAll() {
                   handler.removeCallbacks(positionRunnable)
+                  fadeRunnable?.let { duckHandler.removeCallbacks(it) }
                   abandonAudioFocus()
-                  mp?.apply { if (isPlaying) stop(); release() }; mp = null
+                  mp?.let { m ->
+                      onPauseSave?.invoke(m.currentPosition, m.duration)
+                      if (m.isPlaying) m.stop()
+                      m.release()
+                  }
+                  mp = null
                   playing = false
                   stopForeground(true)
                   stopSelf()
@@ -455,6 +470,12 @@ jobs:
                       }
                   }
 
+                  MusicService.onPauseSave = { pos, _ ->
+                      runOnUiThread {
+                          ch.invokeMethod("onPauseSave", mapOf("ms" to pos))
+                      }
+                  }
+
                   ch.setMethodCallHandler { call, result ->
                       when (call.method) {
                           "start" -> {
@@ -515,6 +536,7 @@ jobs:
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
 
           const _ch = MethodChannel('com.nareshkushmi.nkplayer/music');
 
@@ -539,6 +561,54 @@ jobs:
 
           Future<void> setPlaybackSpeed(double speed) async {
             try { await _ch.invokeMethod('setSpeed', {'speed': speed}); } catch (_) {}
+          }
+
+          // Called periodically from onPosition to persist last played
+          Future<void> _saveLastPlayed(List<SongModel> songs, int idx, int ms) async {
+            if (idx < 0 || idx >= songs.length) return;
+            final song   = songs[idx];
+            final folder = File(song.data).parent.path.split('/').last;
+            await LastPlayedService.save(
+              path:   song.data,
+              ms:     ms,
+              title:  song.title,
+              folder: folder,
+            );
+          }
+
+          // Global setting: show item position (1 of 25)
+          final showPositionNotifier = ValueNotifier<bool>(false);
+
+          // ── Last Played Service ───────────────────────────────────────────
+          class LastPlayedService {
+            static const _kPath    = 'last_path';
+            static const _kMs      = 'last_ms';
+            static const _kTitle   = 'last_title';
+            static const _kFolder  = 'last_folder';
+
+            static Future<void> save({
+              required String path,
+              required int ms,
+              required String title,
+              required String folder,
+            }) async {
+              final p = await SharedPreferences.getInstance();
+              await p.setString(_kPath,   path);
+              await p.setInt(_kMs,        ms);
+              await p.setString(_kTitle,  title);
+              await p.setString(_kFolder, folder);
+            }
+
+            static Future<Map<String, dynamic>?> load({String? folder}) async {
+              final p = await SharedPreferences.getInstance();
+              final path   = p.getString(_kPath);
+              final ms     = p.getInt(_kMs);
+              final title  = p.getString(_kTitle);
+              final saved  = p.getString(_kFolder);
+              if (path == null || ms == null) return null;
+              if (folder != null && saved != folder) return null;
+              return {'path': path, 'ms': ms, 'title': title, 'folder': saved};
+            }
           }
 
           void main() {
@@ -613,6 +683,8 @@ jobs:
             List<CustomFolder> _folders = [];
             List<SongModel> _all = [], _filtered = [];
             bool _loading = true;
+            final Set<int> _selFolders = {};
+            bool _isFolderSel = false;
 
             @override
             void initState() {
@@ -633,15 +705,66 @@ jobs:
 
             // Back press: 1st → close keyboard, 2nd → close search
             bool _handleBack() {
+              if (_isFolderSel) {
+                setState(() { _selFolders.clear(); _isFolderSel = false; });
+                return true;
+              }
               if (_searching) {
-                if (_focus.hasFocus) {
-                  _focus.unfocus();
-                  return true;
-                }
+                if (_focus.hasFocus) { _focus.unfocus(); return true; }
                 setState(() { _searching = false; _sc.clear(); });
                 return true;
               }
               return false;
+            }
+
+            void _showSettings(BuildContext context) {
+              showModalBottomSheet(
+                context: context,
+                backgroundColor: const Color(0xFF1E1E1E),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                builder: (ctx) => ValueListenableBuilder<bool>(
+                  valueListenable: showPositionNotifier,
+                  builder: (ctx, showPos, _) => Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Settings',
+                            style: GoogleFonts.poppins(
+                                fontSize: 18, fontWeight: FontWeight.bold,
+                                color: Colors.white)),
+                        const SizedBox(height: 16),
+                        Text('List Settings',
+                            style: TextStyle(
+                                fontSize: 13, color: Colors.grey[400],
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.8)),
+                        const Divider(color: Colors.grey),
+                        Semantics(
+                          label: 'show item position toggle, ' + (showPos ? 'checked' : 'not checked'),
+                          button: true,
+                          excludeSemantics: true,
+                          child: SwitchListTile(
+                            title: const Text('Show item position',
+                                style: TextStyle(color: Colors.white)),
+                            subtitle: const Text('e.g. Song Name  1 of 25',
+                                style: TextStyle(color: Colors.grey, fontSize: 12)),
+                            value: showPos,
+                            activeColor: Colors.blueAccent,
+                            contentPadding: EdgeInsets.zero,
+                            onChanged: (val) {
+                              showPositionNotifier.value = val;
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
             }
 
             Future<void> _load() async {
@@ -661,44 +784,114 @@ jobs:
 
             @override
             Widget build(BuildContext context) => PopScope(
-                  canPop: !_searching,
+                  canPop: !_searching && !_isFolderSel,
                   onPopInvoked: (didPop) { if (!didPop) _handleBack(); },
                   child: Scaffold(
                   appBar: AppBar(
-                    title: _searching
-                        ? TextField(
-                            controller: _sc,
-                            focusNode: _focus,
-                            autofocus: true,
-                            decoration: InputDecoration(
-                              hintText: 'Search songs...',
-                              border: InputBorder.none,
-                              suffixIcon: _sc.text.isNotEmpty
-                                  ? Semantics(
-                                      label: 'clear search button',
-                                      button: true,
-                                      container: true,
-                                      excludeSemantics: true,
-                                      child: IconButton(
-                                        icon: const Icon(Icons.clear),
-                                        onPressed: () => _sc.clear(),
-                                      ),
-                                    )
-                                  : null,
-                            ),
-                          )
-                        : Text('Folders', style: GoogleFonts.poppins()),
+                    leading: _isFolderSel
+                        ? Semantics(
+                            label: 'close selection button',
+                            button: true,
+                            excludeSemantics: true,
+                            child: IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () => setState(() {
+                                _selFolders.clear(); _isFolderSel = false;
+                              }),
+                            ))
+                        : null,
+                    title: _isFolderSel
+                        ? Text('${_selFolders.length} Selected')
+                        : _searching
+                            ? TextField(
+                                controller: _sc,
+                                focusNode: _focus,
+                                autofocus: true,
+                                decoration: InputDecoration(
+                                  hintText: 'Search songs...',
+                                  border: InputBorder.none,
+                                  suffixIcon: _sc.text.isNotEmpty
+                                      ? Semantics(
+                                          label: 'clear search button',
+                                          button: true,
+                                          container: true,
+                                          excludeSemantics: true,
+                                          child: IconButton(
+                                            icon: const Icon(Icons.clear),
+                                            onPressed: () => _sc.clear(),
+                                          ),
+                                        )
+                                      : null,
+                                ),
+                              )
+                            : Text('Folders', style: GoogleFonts.poppins()),
                     actions: [
-                      if (!_searching)
+                      if (_isFolderSel) ...[
+                        Semantics(
+                          label: 'select all folders button',
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(
+                            icon: const Icon(Icons.select_all),
+                            onPressed: () => setState(() =>
+                                _selFolders.addAll(Iterable.generate(_folders.length))),
+                          ),
+                        ),
+                        Semantics(
+                          label: 'play selected folders button',
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(
+                            icon: const Icon(Icons.play_circle),
+                            onPressed: () {
+                              final songs = _selFolders
+                                  .expand((i) => _folders[i].songs)
+                                  .toList();
+                              if (songs.isNotEmpty)
+                                Navigator.push(context, MaterialPageRoute(
+                                    builder: (_) => PlayerScreen(
+                                        songs: songs, initialIndex: 0)));
+                            },
+                          ),
+                        ),
+                      ] else if (!_searching) ...[
                         Semantics(
                           label: 'search button',
                           button: true,
                           excludeSemantics: true,
                           child: IconButton(
                             icon: const Icon(Icons.search),
-                            onPressed: () => setState(() => _searching = true),
+                            onPressed: () {
+                              setState(() => _searching = true);
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                _focus.requestFocus();
+                              });
+                            },
                           ),
                         ),
+                        Semantics(
+                          label: 'menu button',
+                          button: true,
+                          excludeSemantics: true,
+                          child: PopupMenuButton<String>(
+                            icon: const Icon(Icons.more_vert),
+                            tooltip: 'Menu',
+                            onSelected: (value) {
+                              if (value == 'settings') _showSettings(context);
+                            },
+                            itemBuilder: (ctx) => [
+                              const PopupMenuItem(
+                                value: 'settings',
+                                child: Row(children: [
+                                  Icon(Icons.settings, color: Colors.blueAccent),
+                                  SizedBox(width: 12),
+                                  Text('Settings'),
+                                ]),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                   body: _loading
@@ -706,28 +899,88 @@ jobs:
                       : _searching
                           ? ListView.builder(
                               itemCount: _filtered.length,
-                              itemBuilder: (_, i) => ListTile(
-                                leading: const Icon(Icons.music_note,
-                                    color: Colors.blueAccent),
-                                title: Text(_filtered[i].title, maxLines: 1),
-                                onTap: () => Navigator.push(context, MaterialPageRoute(
-                                    builder: (_) => PlayerScreen(
-                                        songs: _filtered, initialIndex: i))),
+                              itemBuilder: (_, i) => ValueListenableBuilder<bool>(
+                                valueListenable: showPositionNotifier,
+                                builder: (ctx, showPos, _) => ListTile(
+                                  leading: const Icon(Icons.music_note,
+                                      color: Colors.blueAccent),
+                                  title: Text(showPos
+                                      ? _filtered[i].title + '  ' + (i + 1).toString() + ' of ' + _filtered.length.toString()
+                                      : _filtered[i].title, maxLines: 1),
+                                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                                      builder: (_) => PlayerScreen(
+                                          songs: _filtered, initialIndex: i))),
+                                ),
                               ))
                           : ListView.builder(
                               itemCount: _folders.length,
                               itemBuilder: (_, i) {
                                 final f = _folders[i];
-                                return ListTile(
-                                  leading: const Icon(Icons.folder,
-                                      color: Colors.amber),
-                                  title: Text(f.name),
-                                  subtitle: Text('${f.songs.length} files'),
-                                  onTap: () => Navigator.push(context,
-                                      MaterialPageRoute(builder: (_) =>
-                                          SongListScreen(folder: f))),
+                                final isFSel = _selFolders.contains(i);
+                                return ValueListenableBuilder<bool>(
+                                  valueListenable: showPositionNotifier,
+                                  builder: (ctx, showPos, _) => ListTile(
+                                    tileColor: isFSel ? Colors.blueAccent.withOpacity(0.1) : null,
+                                    leading: Icon(
+                                      isFSel ? Icons.check_circle : Icons.folder,
+                                      color: isFSel ? Colors.blueAccent : Colors.amber,
+                                    ),
+                                    title: Text(f.name),
+                                    subtitle: Text(showPos
+                                        ? '${f.songs.length} files  ' + (i + 1).toString() + ' of ' + _folders.length.toString()
+                                        : '${f.songs.length} files'),
+                                    onLongPress: () => setState(() {
+                                      _selFolders.add(i); _isFolderSel = true;
+                                    }),
+                                    onTap: () {
+                                      if (_isFolderSel) {
+                                        setState(() {
+                                          if (isFSel) _selFolders.remove(i);
+                                          else _selFolders.add(i);
+                                          _isFolderSel = _selFolders.isNotEmpty;
+                                        });
+                                      } else {
+                                        Navigator.push(context, MaterialPageRoute(
+                                            builder: (_) => SongListScreen(folder: f)));
+                                      }
+                                    },
+                                  ),
                                 );
                               }),
+                floatingActionButton: Semantics(
+                  label: 'play last button',
+                  button: true,
+                  excludeSemantics: true,
+                  child: FloatingActionButton.extended(
+                    backgroundColor: Colors.blueAccent,
+                    icon: const Icon(Icons.history),
+                    label: const Text('Play Last'),
+                    onPressed: () async {
+                      final last = await LastPlayedService.load();
+                      if (last == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('No last played found.')));
+                        return;
+                      }
+                      final path = last['path'] as String;
+                      // Find song in all songs
+                      final song = _all.firstWhere(
+                        (s) => s.data == path,
+                        orElse: () => _all.first,
+                      );
+                      final idx = _all.indexOf(song);
+                      await startMusic(_all, idx);
+                      final ms = last['ms'] as int;
+                      if (ms > 0) {
+                        await Future.delayed(const Duration(milliseconds: 500));
+                        await _ch.invokeMethod('seek', {'ms': ms});
+                      }
+                      if (context.mounted)
+                        Navigator.push(context, MaterialPageRoute(
+                            builder: (_) => PlayerScreen(songs: _all, initialIndex: idx)));
+                    },
+                  ),
+                ),
                 ));
           }
 
@@ -843,29 +1096,69 @@ jobs:
                           ]
                         : null,
                   ),
+                  floatingActionButton: Semantics(
+                    label: 'play last button',
+                    button: true,
+                    excludeSemantics: true,
+                    child: FloatingActionButton.extended(
+                      backgroundColor: Colors.blueAccent,
+                      icon: const Icon(Icons.history),
+                      label: const Text('Play Last'),
+                      onPressed: () async {
+                        final folderName = widget.folder.name;
+                        final last = await LastPlayedService.load(folder: folderName);
+                        if (last == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('No last played in this folder.')));
+                          return;
+                        }
+                        final path = last['path'] as String;
+                        final song = widget.folder.songs.firstWhere(
+                          (s) => s.data == path,
+                          orElse: () => widget.folder.songs.first,
+                        );
+                        final idx = widget.folder.songs.indexOf(song);
+                        await startMusic(widget.folder.songs, idx);
+                        final ms = last['ms'] as int;
+                        if (ms > 0) {
+                          await Future.delayed(const Duration(milliseconds: 500));
+                          await _ch.invokeMethod('seek', {'ms': ms});
+                        }
+                        if (context.mounted)
+                          Navigator.push(context, MaterialPageRoute(
+                              builder: (_) => PlayerScreen(
+                                  songs: widget.folder.songs, initialIndex: idx)));
+                      },
+                    ),
+                  ),
                   body: ListView.builder(
                     itemCount: _filtered.length,
                     itemBuilder: (_, i) {
                       final isS = _sel.contains(i);
-                      return ListTile(
-                        tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
-                        leading: Icon(isS ? Icons.check_circle : Icons.music_note,
-                            color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
-                        title: Text(_filtered[i].title, maxLines: 1),
-                        onLongPress: () =>
-                            setState(() { _sel.add(i); _isSel = true; }),
-                        onTap: () {
-                          if (_isSel) {
-                            setState(() {
-                              if (isS) _sel.remove(i); else _sel.add(i);
-                              _isSel = _sel.isNotEmpty;
-                            });
-                          } else {
-                            Navigator.push(context, MaterialPageRoute(
-                                builder: (_) => PlayerScreen(
-                                    songs: _filtered, initialIndex: i)));
-                          }
-                        },
+                      return ValueListenableBuilder<bool>(
+                        valueListenable: showPositionNotifier,
+                        builder: (ctx, showPos, _) => ListTile(
+                          tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
+                          leading: Icon(isS ? Icons.check_circle : Icons.music_note,
+                              color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                          title: Text(showPos
+                              ? _filtered[i].title + '  ' + (i + 1).toString() + ' of ' + _filtered.length.toString()
+                              : _filtered[i].title, maxLines: 1),
+                          onLongPress: () =>
+                              setState(() { _sel.add(i); _isSel = true; }),
+                          onTap: () {
+                            if (_isSel) {
+                              setState(() {
+                                if (isS) _sel.remove(i); else _sel.add(i);
+                                _isSel = _sel.isNotEmpty;
+                              });
+                            } else {
+                              Navigator.push(context, MaterialPageRoute(
+                                  builder: (_) => PlayerScreen(
+                                      songs: _filtered, initialIndex: i)));
+                            }
+                          },
+                        ),
                       );
                     },
                   ),
@@ -902,9 +1195,12 @@ jobs:
                     _pos = Duration.zero;
                   });
                 } else if (call.method == 'onPosition') {
-                  setState(() {
-                    _pos = Duration(milliseconds: call.arguments['ms'] as int);
-                  });
+                  final ms = call.arguments['ms'] as int;
+                  setState(() { _pos = Duration(milliseconds: ms); });
+                } else if (call.method == 'onPauseSave') {
+                  // Save exact position when paused or stopped
+                  final ms = call.arguments['ms'] as int;
+                  _saveLastPlayed(widget.songs, _idx, ms);
                 } else if (call.method == 'onDuration') {
                   setState(() {
                     _dur = Duration(milliseconds: call.arguments['ms'] as int);
@@ -1163,5 +1459,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.82
+          name: NKPlayer-v1.0.86
           path: build/app/outputs/flutter-apk/app-release.apk
