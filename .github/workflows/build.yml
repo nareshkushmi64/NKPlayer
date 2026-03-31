@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.91)
+name: NKPlayer - Background Playback (v1.0.92)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.91+92
+          version: 1.0.92+93
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -48,6 +48,7 @@ jobs:
             google_fonts: ^6.1.0
             device_info_plus: ^10.1.0
             share_plus: ^7.2.2
+            file_picker: ^6.1.1
           flutter:
             uses-material-design: true
           PUBSPEC
@@ -573,6 +574,7 @@ jobs:
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
           import 'package:share_plus/share_plus.dart';
+          import 'package:file_picker/file_picker.dart';
 
           const _ch = MethodChannel('com.nareshkushmi.nkplayer/music');
 
@@ -1134,52 +1136,16 @@ jobs:
             // Pick destination folder then copy/move
             Future<void> _pickFolderAndOperate(
                 BuildContext context, SongModel song, String op) async {
-              // Show folder list to pick destination
-              final folders = <String>{};
-              for (final s in widget.folder.songs) {
-                if (s.data.isNotEmpty) {
-                  folders.add(File(s.data).parent.path);
-                }
-              }
-              // Also show all available parent paths
-              final allFolders = _filtered.map((s) =>
-                  File(s.data).parent.path).toSet().toList();
-
-              if (!context.mounted) return;
-              final dest = await showDialog<String>(
-                context: context,
-                builder: (dctx) => AlertDialog(
-                  backgroundColor: const Color(0xFF1E1E1E),
-                  title: Text(op == 'copy' ? 'Copy to folder' : 'Move to folder'),
-                  content: SizedBox(
-                    width: double.maxFinite,
-                    height: 300,
-                    child: ListView.builder(
-                      itemCount: allFolders.length,
-                      itemBuilder: (_, i) {
-                        final folderPath = allFolders[i];
-                        final folderName = folderPath.split('/').last;
-                        return ListTile(
-                          leading: const Icon(Icons.folder, color: Colors.amber),
-                          title: Text(folderName),
-                          onTap: () => Navigator.pop(dctx, folderPath),
-                        );
-                      },
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(dctx),
-                      child: const Text('Cancel'),
-                    ),
-                  ],
-                ),
+              // Open device folder picker — any folder on storage
+              final destDir = await FilePicker.platform.getDirectoryPath(
+                dialogTitle: op == 'copy' ? 'Copy to folder' : 'Move to folder',
               );
-              if (dest == null || !context.mounted) return;
+              if (destDir == null || !context.mounted) return;
 
               try {
-                final srcFile = File(song.data);
-                final destFile = File(dest + '/' + srcFile.uri.pathSegments.last);
+                final srcFile  = File(song.data);
+                final fileName = srcFile.uri.pathSegments.last;
+                final destFile = File(destDir + '/' + fileName);
                 if (op == 'copy') {
                   await srcFile.copy(destFile.path);
                   if (context.mounted)
@@ -1197,7 +1163,7 @@ jobs:
               } catch (e) {
                 if (context.mounted)
                   ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error: $e')));
+                      SnackBar(content: Text('Error: ' + e.toString())));
               }
             }
 
@@ -1208,8 +1174,7 @@ jobs:
                 builder: (dctx) => AlertDialog(
                   backgroundColor: const Color(0xFF1E1E1E),
                   title: const Text('Delete'),
-                  content: Text('Delete "${song.title}"?
-This cannot be undone.'),
+                  content: Text('Delete "' + song.title + '"? This cannot be undone.'),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(dctx, false),
@@ -1703,5 +1668,5 @@ This cannot be undone.'),
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.91
+          name: NKPlayer-v1.0.92
           path: build/app/outputs/flutter-apk/app-release.apk
