@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.87)
+name: NKPlayer - Background Playback (v1.0.88)
 on: [push]
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.87+88
+          version: 1.0.88+89
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -47,7 +47,6 @@ jobs:
             permission_handler: ^11.3.0
             google_fonts: ^6.1.0
             device_info_plus: ^10.1.0
-            shared_preferences: ^2.2.3
           flutter:
             uses-material-design: true
           PUBSPEC
@@ -109,6 +108,7 @@ jobs:
           package com.nareshkushmi.nkplayer
 
           import android.app.*
+          import android.content.Context
           import android.content.Intent
           import android.media.AudioAttributes
           import android.media.AudioFocusRequest
@@ -257,12 +257,18 @@ jobs:
                       mp = MediaPlayer().apply {
                           setDataSource(paths[currentIndex])
                           prepare()
-                          // Apply current volume in case ducked
                           setVolume(currentVolume, currentVolume)
                           start()
                           setOnCompletionListener {
-                              if (currentIndex < paths.size - 1) { currentIndex++; playTrack() }
-                              else { playing = false; updateMediaSession(false); updateNotif() }
+                              if (currentIndex < paths.size - 1) {
+                                  currentIndex++
+                                  saveLastPlayed(0)
+                                  playTrack()
+                              } else {
+                                  playing = false
+                                  updateMediaSession(false)
+                                  updateNotif()
+                              }
                           }
                       }
                       playing = true
@@ -290,13 +296,28 @@ jobs:
                   handler.post(positionRunnable)
               }
 
+              // Save last played directly in Kotlin — works even when Flutter is gone
+              private fun saveLastPlayed(posMs: Int) {
+                  if (paths.isEmpty() || currentIndex >= paths.size) return
+                  val prefs = getSharedPreferences("nkplayer_prefs", Context.MODE_PRIVATE)
+                  val folderPath = paths[currentIndex]
+                  val folder = try {
+                      java.io.File(folderPath).parentFile?.name ?: ""
+                  } catch (e: Exception) { "" }
+                  prefs.edit()
+                      .putString("last_path",   paths[currentIndex])
+                      .putInt(   "last_ms",     posMs)
+                      .putString("last_title",  titles.getOrElse(currentIndex)  { "" })
+                      .putString("last_folder", folder)
+                      .apply()
+              }
+
               private fun togglePause() {
                   val m = mp ?: return
                   if (m.isPlaying) {
                       m.pause()
                       playing = false
-                      // Save exact pause position
-                      onPauseSave?.invoke(m.currentPosition, m.duration)
+                      saveLastPlayed(m.currentPosition)
                   } else {
                       m.start()
                       playing = true
@@ -342,7 +363,7 @@ jobs:
                   fadeRunnable?.let { duckHandler.removeCallbacks(it) }
                   abandonAudioFocus()
                   mp?.let { m ->
-                      onPauseSave?.invoke(m.currentPosition, m.duration)
+                      saveLastPlayed(m.currentPosition)
                       if (m.isPlaying) m.stop()
                       m.release()
                   }
@@ -470,11 +491,7 @@ jobs:
                       }
                   }
 
-                  MusicService.onPauseSave = { pos, _ ->
-                      runOnUiThread {
-                          ch.invokeMethod("onPauseSave", mapOf("ms" to pos))
-                      }
-                  }
+                  // Position saving now handled directly in MusicService (Kotlin)
 
                   ch.setMethodCallHandler { call, result ->
                       when (call.method) {
@@ -520,6 +537,24 @@ jobs:
                               })
                               result.success(null)
                           }
+                          "getLastPlayed" -> {
+                              val prefs = getSharedPreferences("nkplayer_prefs",
+                                  android.content.Context.MODE_PRIVATE)
+                              val path   = prefs.getString("last_path",   null)
+                              val ms     = prefs.getInt(   "last_ms",     -1)
+                              val title  = prefs.getString("last_title",  "")
+                              val folder = prefs.getString("last_folder", "")
+                              if (path == null || ms < 0) {
+                                  result.success(null)
+                              } else {
+                                  result.success(mapOf(
+                                      "path"   to path,
+                                      "ms"     to ms,
+                                      "title"  to title,
+                                      "folder" to folder
+                                  ))
+                              }
+                          }
                           else -> result.notImplemented()
                       }
                   }
@@ -536,7 +571,6 @@ jobs:
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
-          import 'package:shared_preferences/shared_preferences.dart';
 
           const _ch = MethodChannel('com.nareshkushmi.nkplayer/music');
 
@@ -563,51 +597,29 @@ jobs:
             try { await _ch.invokeMethod('setSpeed', {'speed': speed}); } catch (_) {}
           }
 
-          // Called periodically from onPosition to persist last played
-          Future<void> _saveLastPlayed(List<SongModel> songs, int idx, int ms) async {
-            if (idx < 0 || idx >= songs.length) return;
-            final song   = songs[idx];
-            final folder = File(song.data).parent.path.split('/').last;
-            await LastPlayedService.save(
-              path:   song.data,
-              ms:     ms,
-              title:  song.title,
-              folder: folder,
-            );
-          }
+
 
           // Global setting: show item position (1 of 25)
           final showPositionNotifier = ValueNotifier<bool>(false);
 
-          // ── Last Played Service ───────────────────────────────────────────
+          // ── Last Played Service (Kotlin saves, Dart reads via MethodChannel) ─
           class LastPlayedService {
-            static const _kPath    = 'last_path';
-            static const _kMs      = 'last_ms';
-            static const _kTitle   = 'last_title';
-            static const _kFolder  = 'last_folder';
-
-            static Future<void> save({
-              required String path,
-              required int ms,
-              required String title,
-              required String folder,
-            }) async {
-              final p = await SharedPreferences.getInstance();
-              await p.setString(_kPath,   path);
-              await p.setInt(_kMs,        ms);
-              await p.setString(_kTitle,  title);
-              await p.setString(_kFolder, folder);
-            }
-
             static Future<Map<String, dynamic>?> load({String? folder}) async {
-              final p = await SharedPreferences.getInstance();
-              final path   = p.getString(_kPath);
-              final ms     = p.getInt(_kMs);
-              final title  = p.getString(_kTitle);
-              final saved  = p.getString(_kFolder);
-              if (path == null || ms == null) return null;
-              if (folder != null && saved != folder) return null;
-              return {'path': path, 'ms': ms, 'title': title, 'folder': saved};
+              try {
+                final result = await _ch.invokeMethod<Map>('getLastPlayed');
+                if (result == null) return null;
+                final path  = result['path']   as String?;
+                final ms    = result['ms']      as int?;
+                final saved = result['folder']  as String?;
+                if (path == null || ms == null) return null;
+                if (folder != null && saved != folder) return null;
+                return {
+                  'path':   path,
+                  'ms':     ms,
+                  'title':  result['title'] ?? '',
+                  'folder': saved ?? '',
+                };
+              } catch (_) { return null; }
             }
           }
 
@@ -1209,10 +1221,7 @@ jobs:
                 } else if (call.method == 'onPosition') {
                   final ms = call.arguments['ms'] as int;
                   setState(() { _pos = Duration(milliseconds: ms); });
-                } else if (call.method == 'onPauseSave') {
-                  // Save exact position when paused or stopped
-                  final ms = call.arguments['ms'] as int;
-                  _saveLastPlayed(widget.songs, _idx, ms);
+
                 } else if (call.method == 'onDuration') {
                   final durMs = call.arguments['ms'] as int;
                   setState(() { _dur = Duration(milliseconds: durMs); });
@@ -1475,5 +1484,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.87
+          name: NKPlayer-v1.0.88
           path: build/app/outputs/flutter-apk/app-release.apk
