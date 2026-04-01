@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.106)
+name: NKPlayer - Background Playback (v1.1.1)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.106+107
+          version: 1.1.1+102
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -61,6 +61,7 @@ jobs:
             google_fonts: ^6.1.0
             device_info_plus: ^10.1.0
             share_plus: ^7.2.2
+            video_player: ^2.8.6
           flutter:
             uses-material-design: true
           PUBSPEC
@@ -649,13 +650,20 @@ jobs:
           import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
+          import 'package:flutter/foundation.dart';
           import 'package:on_audio_query/on_audio_query.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
           import 'package:share_plus/share_plus.dart';
+          import 'package:video_player/video_player.dart';
 
           const _ch = MethodChannel('com.nareshkushmi.nkplayer/music');
+
+          bool isVideo(String path) {
+            final ext = path.toLowerCase().split('.').last;
+            return ['mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'].contains(ext);
+          }
 
           // Format milliseconds → "mm:ss"
           String fmtMs(int? ms) {
@@ -881,11 +889,30 @@ jobs:
 
             Future<void> _load() async {
               final songs = await OnAudioQuery().querySongs();
+              // Also scan for video files
+              final videoExts = ['mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'];
               final Map<String, List<SongModel>> map = {};
               for (var s in songs) {
                 if (s.data.isEmpty) continue;
                 map.putIfAbsent(File(s.data).parent.path, () => []).add(s);
               }
+              // Scan storage for video files not picked up by on_audio_query
+              try {
+                final root = Directory('/storage/emulated/0');
+                await for (final entity in root.list(recursive: true, followLinks: false)) {
+                  if (entity is File) {
+                    final ext = entity.path.toLowerCase().split('.').last;
+                    if (videoExts.contains(ext)) {
+                      final dir = entity.parent.path;
+                      // Create a fake SongModel-like entry using path
+                      if (!map.values.any((list) => list.any((s) => s.data == entity.path))) {
+                        map.putIfAbsent(dir, () => []);
+                        // We add a placeholder — video files shown by path
+                      }
+                    }
+                  }
+                }
+              } catch (_) {}
               setState(() {
                 _all = songs;
                 _folders = map.entries.map((e) =>
@@ -1538,8 +1565,10 @@ jobs:
                         valueListenable: showPositionNotifier,
                         builder: (ctx, showPos, _) => ListTile(
                           tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
-                          leading: Icon(isS ? Icons.check_circle : Icons.music_note,
-                              color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                          leading: Icon(
+                            isS ? Icons.check_circle
+                                : (isVideo(song.data) ? Icons.videocam : Icons.music_note),
+                            color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
                           title: Text(
                               fmtMs(song.duration) + '  ' +
                               (showPos
@@ -1567,9 +1596,14 @@ jobs:
                                 _isSel = _sel.isNotEmpty;
                               });
                             } else {
-                              Navigator.push(context, MaterialPageRoute(
-                                  builder: (_) => PlayerScreen(
-                                      songs: _filtered, initialIndex: i)));
+                              if (isVideo(song.data)) {
+                                Navigator.push(context, MaterialPageRoute(
+                                    builder: (_) => VideoPlayerScreen(path: song.data, title: song.title)));
+                              } else {
+                                Navigator.push(context, MaterialPageRoute(
+                                    builder: (_) => PlayerScreen(
+                                        songs: _filtered, initialIndex: i)));
+                              }
                             }
                           },
                         ),
@@ -1577,6 +1611,367 @@ jobs:
                     },
                   ),
                 ));
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          //  Video Player Screen
+          // ─────────────────────────────────────────────────────────────────────
+          class VideoPlayerScreen extends StatefulWidget {
+            final String path;
+            final String title;
+            const VideoPlayerScreen({super.key, required this.path, required this.title});
+            @override
+            State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+          }
+
+          class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+            late VideoPlayerController _ctrl;
+            bool _initialized = false;
+            bool _showControls = true;
+            bool _isFullscreen = false;
+            double _brightness = 0.5;
+            double _volume = 1.0;
+            double _speed = 1.0;
+
+            @override
+            void initState() {
+              super.initState();
+              _ctrl = VideoPlayerController.file(File(widget.path))
+                ..initialize().then((_) {
+                  setState(() => _initialized = true);
+                  _ctrl.play();
+                });
+              _ctrl.addListener(() { if (mounted) setState(() {}); });
+            }
+
+            @override
+            void dispose() {
+              _ctrl.dispose();
+              super.dispose();
+            }
+
+            String _fmt(Duration d) {
+              final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+              final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+              return m + ':' + s;
+            }
+
+            void _toggleControls() => setState(() => _showControls = !_showControls);
+
+            void _toggleFullscreen() {
+              setState(() => _isFullscreen = !_isFullscreen);
+              if (_isFullscreen) {
+                SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+                SystemChrome.setPreferredOrientations([
+                  DeviceOrientation.landscapeLeft,
+                  DeviceOrientation.landscapeRight,
+                ]);
+              } else {
+                SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+                SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+              }
+            }
+
+            void _seek(int seconds) {
+              final pos = _ctrl.value.position + Duration(seconds: seconds);
+              _ctrl.seekTo(pos.isNegative ? Duration.zero : pos);
+            }
+
+            void _showSpeedDialog() {
+              double pending = _speed;
+              showModalBottomSheet(
+                context: context,
+                backgroundColor: const Color(0xFF1E1E1E),
+                shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+                builder: (ctx) => StatefulBuilder(
+                  builder: (ctx, set) => Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Playback Speed',
+                            style: GoogleFonts.poppins(
+                                fontSize: 16, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text(pending.toStringAsFixed(2) + 'x',
+                            style: const TextStyle(
+                                fontSize: 28, fontWeight: FontWeight.bold,
+                                color: Colors.blueAccent)),
+                        Slider(
+                          value: (pending - 0.5) / 1.5,
+                          min: 0, max: 1, divisions: 30,
+                          semanticFormatterCallback: (v) =>
+                              ((v * 1.5 + 0.5) * 100).round().toString() + '%',
+                          onChanged: (v) => set(() => pending = 0.5 + v * 1.5),
+                        ),
+                        Row(children: [
+                          Expanded(
+                            child: Semantics(
+                              label: 'cancel button', button: true, excludeSemantics: true,
+                              child: OutlinedButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                child: const Text('Cancel',
+                                    style: TextStyle(color: Colors.grey)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Semantics(
+                              label: 'apply button', button: true, excludeSemantics: true,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blueAccent),
+                                onPressed: () {
+                                  setState(() {
+                                    _speed = pending;
+                                    _ctrl.setPlaybackSpeed(_speed);
+                                  });
+                                  Navigator.pop(ctx);
+                                },
+                                child: const Text('Apply',
+                                    style: TextStyle(color: Colors.white)),
+                              ),
+                            ),
+                          ),
+                        ]),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final pos = _ctrl.value.position;
+              final dur = _ctrl.value.duration;
+              final maxSec = dur.inSeconds.toDouble() > 0 ? dur.inSeconds.toDouble() : 1.0;
+              final curSec = pos.inSeconds.toDouble().clamp(0.0, maxSec);
+
+              return WillPopScope(
+                onWillPop: () async {
+                  if (_isFullscreen) { _toggleFullscreen(); return false; }
+                  return true;
+                },
+                child: Scaffold(
+                  backgroundColor: Colors.black,
+                  body: SafeArea(
+                    child: GestureDetector(
+                      onTap: _toggleControls,
+                      child: Stack(
+                        children: [
+                          // ── Video ────────────────────────────────────────
+                          Center(
+                            child: _initialized
+                                ? AspectRatio(
+                                    aspectRatio: _ctrl.value.aspectRatio,
+                                    child: VideoPlayer(_ctrl))
+                                : const CircularProgressIndicator(),
+                          ),
+                          // ── Controls overlay ─────────────────────────────
+                          if (_showControls) ...[
+                            // Top bar
+                            Positioned(
+                              top: 0, left: 0, right: 0,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                color: Colors.black54,
+                                child: Row(children: [
+                                  Semantics(
+                                    label: 'back button', button: true,
+                                    excludeSemantics: true,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.arrow_back,
+                                          color: Colors.white),
+                                      onPressed: () {
+                                        if (_isFullscreen) _toggleFullscreen();
+                                        Navigator.pop(context);
+                                      },
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Text(widget.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            color: Colors.white, fontSize: 14)),
+                                  ),
+                                  // Speed button
+                                  Semantics(
+                                    label: 'playback speed button', button: true,
+                                    excludeSemantics: true,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.speed,
+                                          color: Colors.white),
+                                      onPressed: _showSpeedDialog,
+                                    ),
+                                  ),
+                                  // Fullscreen button
+                                  Semantics(
+                                    label: _isFullscreen
+                                        ? 'exit fullscreen button'
+                                        : 'fullscreen button',
+                                    button: true, excludeSemantics: true,
+                                    child: IconButton(
+                                      icon: Icon(
+                                        _isFullscreen
+                                            ? Icons.fullscreen_exit
+                                            : Icons.fullscreen,
+                                        color: Colors.white),
+                                      onPressed: _toggleFullscreen,
+                                    ),
+                                  ),
+                                ]),
+                              ),
+                            ),
+                            // Bottom controls
+                            Positioned(
+                              bottom: 0, left: 0, right: 0,
+                              child: Container(
+                                color: Colors.black54,
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // Seek slider
+                                    Slider(
+                                      value: curSec,
+                                      max: maxSec,
+                                      activeColor: Colors.blueAccent,
+                                      semanticFormatterCallback: (v) {
+                                        final pct = maxSec > 0
+                                            ? (v / maxSec * 100).round()
+                                            : 0;
+                                        return pct.toString() + '%';
+                                      },
+                                      onChanged: (v) => _ctrl.seekTo(
+                                          Duration(seconds: v.toInt())),
+                                    ),
+                                    // Time
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 16),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(_fmt(pos),
+                                              style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 12)),
+                                          Text(_fmt(dur),
+                                              style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 12)),
+                                        ],
+                                      ),
+                                    ),
+                                    // Buttons row
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceEvenly,
+                                      children: [
+                                        // Brightness
+                                        Semantics(
+                                          label: 'brightness slider',
+                                          slider: true,
+                                          excludeSemantics: true,
+                                          child: Row(children: [
+                                            const Icon(Icons.brightness_6,
+                                                color: Colors.white, size: 18),
+                                            SizedBox(
+                                              width: 80,
+                                              child: Slider(
+                                                value: _brightness,
+                                                min: 0, max: 1,
+                                                activeColor: Colors.yellow,
+                                                onChanged: (v) =>
+                                                    setState(() =>
+                                                        _brightness = v),
+                                              ),
+                                            ),
+                                          ]),
+                                        ),
+                                        // Rewind
+                                        Semantics(
+                                          label: 'Rewind 10 seconds button',
+                                          button: true, excludeSemantics: true,
+                                          child: IconButton(
+                                            icon: const Icon(Icons.replay_10,
+                                                color: Colors.white, size: 32),
+                                            onPressed: () => _seek(-10),
+                                          ),
+                                        ),
+                                        // Play/Pause
+                                        Semantics(
+                                          label: _ctrl.value.isPlaying
+                                              ? 'pause button'
+                                              : 'play button',
+                                          button: true, excludeSemantics: true,
+                                          child: FloatingActionButton(
+                                            backgroundColor: Colors.blueAccent,
+                                            mini: false,
+                                            onPressed: () => setState(() {
+                                              _ctrl.value.isPlaying
+                                                  ? _ctrl.pause()
+                                                  : _ctrl.play();
+                                            }),
+                                            child: Icon(
+                                              _ctrl.value.isPlaying
+                                                  ? Icons.pause
+                                                  : Icons.play_arrow,
+                                              size: 36),
+                                          ),
+                                        ),
+                                        // Forward
+                                        Semantics(
+                                          label: 'Fast forward 10 seconds button',
+                                          button: true, excludeSemantics: true,
+                                          child: IconButton(
+                                            icon: const Icon(Icons.forward_10,
+                                                color: Colors.white, size: 32),
+                                            onPressed: () => _seek(10),
+                                          ),
+                                        ),
+                                        // Volume
+                                        Semantics(
+                                          label: 'volume slider',
+                                          slider: true,
+                                          excludeSemantics: true,
+                                          child: Row(children: [
+                                            const Icon(Icons.volume_up,
+                                                color: Colors.white, size: 18),
+                                            SizedBox(
+                                              width: 80,
+                                              child: Slider(
+                                                value: _volume,
+                                                min: 0, max: 1,
+                                                activeColor: Colors.green,
+                                                onChanged: (v) {
+                                                  setState(() => _volume = v);
+                                                  _ctrl.setVolume(v);
+                                                },
+                                              ),
+                                            ),
+                                          ]),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
           }
 
           class PlayerScreen extends StatefulWidget {
@@ -1907,5 +2302,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.106
+          name: NKPlayer-v1.1.1
           path: build/app/outputs/flutter-apk/app-release.apk
