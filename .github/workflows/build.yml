@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.102)
+name: NKPlayer - Background Playback (v1.0.103)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.102+103
+          version: 1.0.103+104
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -294,12 +294,19 @@ jobs:
                           mp?.let { m ->
                               val pos = (m.currentPosition - 10000).coerceAtLeast(0)
                               m.seekTo(pos)
+                              // Notify Flutter of new position
+                              handler.postDelayed({
+                                  onPosition?.invoke(m.currentPosition, m.duration)
+                              }, 200)
                           }
                       }
                       ACTION_FORWARD -> {
                           mp?.let { m ->
                               val pos = (m.currentPosition + 10000).coerceAtMost(m.duration)
                               m.seekTo(pos)
+                              handler.postDelayed({
+                                  onPosition?.invoke(m.currentPosition, m.duration)
+                              }, 200)
                           }
                       }
                       "com.nareshkushmi.nkplayer.SEEK" -> {
@@ -495,11 +502,28 @@ jobs:
                       .setOngoing(playing)
                       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                       .setPriority(NotificationCompat.PRIORITY_LOW)
-                      .addAction(android.R.drawable.ic_media_previous, "Prev",   pi(0, ACTION_PREV))
-                      .addAction(R.drawable.ic_rewind_10,               "-10s",   pi(1, ACTION_REWIND))
-                      .addAction(playIcon,                               playLabel, pi(2, ACTION_PLAY_PAUSE))
-                      .addAction(R.drawable.ic_forward_10,              "+10s",   pi(3, ACTION_FORWARD))
-                      .addAction(android.R.drawable.ic_media_next,      "Next",   pi(4, ACTION_NEXT))
+                      .addAction(NotificationCompat.Action.Builder(
+                          android.R.drawable.ic_media_previous, "Prev", pi(0, ACTION_PREV))
+                          .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_SKIP_TO_PREVIOUS)
+                          .build())
+                      .addAction(NotificationCompat.Action.Builder(
+                          R.drawable.ic_rewind_10, "Rewind 10 seconds", pi(1, ACTION_REWIND))
+                          .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REWIND)
+                          .build())
+                      .addAction(NotificationCompat.Action.Builder(
+                          playIcon, playLabel, pi(2, ACTION_PLAY_PAUSE))
+                          .setSemanticAction(
+                              if (playing) NotificationCompat.Action.SEMANTIC_ACTION_PAUSE
+                              else         NotificationCompat.Action.SEMANTIC_ACTION_PLAY)
+                          .build())
+                      .addAction(NotificationCompat.Action.Builder(
+                          R.drawable.ic_forward_10, "Fast forward 10 seconds", pi(3, ACTION_FORWARD))
+                          .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_FAST_FORWARD)
+                          .build())
+                      .addAction(NotificationCompat.Action.Builder(
+                          android.R.drawable.ic_media_next, "Next", pi(4, ACTION_NEXT))
+                          .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_SKIP_TO_NEXT)
+                          .build())
                       .setStyle(style)
                       .build()
               }
@@ -1855,7 +1879,7 @@ jobs:
                         ),
                         // Rewind 10s
                         Semantics(
-                          label: 'rewind 10 seconds button',
+                          label: 'Rewind 10 seconds button',
                           button: true,
                           excludeSemantics: true,
                           child: IconButton(
@@ -1880,7 +1904,7 @@ jobs:
                         ),
                         // Forward 10s
                         Semantics(
-                          label: 'fast forward 10 seconds button',
+                          label: 'Fast forward 10 seconds button',
                           button: true,
                           excludeSemantics: true,
                           child: IconButton(
@@ -1920,5 +1944,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.102
+          name: NKPlayer-v1.0.103
           path: build/app/outputs/flutter-apk/app-release.apk
