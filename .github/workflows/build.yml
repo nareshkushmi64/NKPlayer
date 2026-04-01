@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.104)
+name: NKPlayer - Background Playback (v1.0.105)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.104+105
+          version: 1.0.105+106
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -161,11 +161,11 @@ jobs:
           import android.media.AudioFocusRequest
           import android.media.AudioManager
           import android.media.MediaPlayer
-          import android.media.session.MediaSession
-          import android.media.session.PlaybackState
           import android.os.Build
           import android.os.IBinder
           import android.support.v4.media.session.MediaSessionCompat
+          import android.support.v4.media.session.PlaybackStateCompat
+          import android.support.v4.media.MediaMetadataCompat
           import androidx.core.app.NotificationCompat
           import androidx.media.app.NotificationCompat.MediaStyle
 
@@ -194,7 +194,6 @@ jobs:
               }
 
               private var mp: MediaPlayer? = null
-              private var mediaSession: MediaSession? = null
               private var mediaSessionCompat: MediaSessionCompat? = null
               private var paths:   ArrayList<String> = arrayListOf()
               private var titles:  ArrayList<String> = arrayListOf()
@@ -261,27 +260,26 @@ jobs:
                   audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
                   requestAudioFocus()
                   mediaSessionCompat = MediaSessionCompat(this, "NKPlayer")
+                  mediaSessionCompat?.setCallback(object : MediaSessionCompat.Callback() {
+                      override fun onPlay()           { if (mp?.isPlaying == false) togglePause() }
+                      override fun onPause()          { if (mp?.isPlaying == true)  togglePause() }
+                      override fun onSkipToNext()     { if (currentIndex < paths.size - 1) { currentIndex++; playTrack() } }
+                      override fun onSkipToPrevious() { if (currentIndex > 0) { currentIndex--; playTrack() } }
+                      override fun onStop()           { stopAll() }
+                      override fun onRewind()         {
+                          mp?.let { m ->
+                              m.seekTo((m.currentPosition - 10000).coerceAtLeast(0))
+                              handler.postDelayed({ onPosition?.invoke(m.currentPosition, m.duration) }, 200)
+                          }
+                      }
+                      override fun onFastForward()    {
+                          mp?.let { m ->
+                              m.seekTo((m.currentPosition + 10000).coerceAtMost(m.duration))
+                              handler.postDelayed({ onPosition?.invoke(m.currentPosition, m.duration) }, 200)
+                          }
+                      }
+                  })
                   mediaSessionCompat?.isActive = true
-                  mediaSession = MediaSession(this, "NKPlayer").apply {
-                      setCallback(object : MediaSession.Callback() {
-                          override fun onPlay()         { if (mp?.isPlaying == false) togglePause() }
-                          override fun onPause()        { if (mp?.isPlaying == true)  togglePause() }
-                          override fun onSkipToNext()   { if (currentIndex < paths.size - 1) { currentIndex++; playTrack() } }
-                          override fun onSkipToPrevious() { if (currentIndex > 0) { currentIndex--; playTrack() } }
-                          override fun onStop()         { stopAll() }
-                          override fun onRewind()       {
-                              mp?.let { m ->
-                                  m.seekTo((m.currentPosition - 10000).coerceAtLeast(0))
-                              }
-                          }
-                          override fun onFastForward()  {
-                              mp?.let { m ->
-                                  m.seekTo((m.currentPosition + 10000).coerceAtMost(m.duration))
-                              }
-                          }
-                      })
-                      isActive = true
-                  }
               }
 
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -458,21 +456,21 @@ jobs:
               }
 
               private fun updateMediaSession(isPlaying: Boolean) {
-                  val state = if (isPlaying) PlaybackState.STATE_PLAYING
-                              else          PlaybackState.STATE_PAUSED
-                  val ps = PlaybackState.Builder()
+                  val state = if (isPlaying) PlaybackStateCompat.STATE_PLAYING
+                              else          PlaybackStateCompat.STATE_PAUSED
+                  val ps = PlaybackStateCompat.Builder()
                       .setActions(
-                          PlaybackState.ACTION_PLAY or
-                          PlaybackState.ACTION_PAUSE or
-                          PlaybackState.ACTION_SKIP_TO_NEXT or
-                          PlaybackState.ACTION_SKIP_TO_PREVIOUS or
-                          PlaybackState.ACTION_STOP or
-                          PlaybackState.ACTION_REWIND or
-                          PlaybackState.ACTION_FAST_FORWARD
+                          PlaybackStateCompat.ACTION_PLAY or
+                          PlaybackStateCompat.ACTION_PAUSE or
+                          PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                          PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                          PlaybackStateCompat.ACTION_STOP or
+                          PlaybackStateCompat.ACTION_REWIND or
+                          PlaybackStateCompat.ACTION_FAST_FORWARD
                       )
-                      .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
+                      .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
                       .build()
-                  mediaSession?.setPlaybackState(ps)
+                  mediaSessionCompat?.setPlaybackState(ps)
               }
 
               private fun updateNotif() {
@@ -551,9 +549,6 @@ jobs:
                   fadeRunnable?.let { duckHandler.removeCallbacks(it) }
                   abandonAudioFocus()
                   mp?.release(); mp = null
-                  mediaSession?.isActive = false
-                  mediaSession?.release()
-                  mediaSession = null
                   mediaSessionCompat?.isActive = false
                   mediaSessionCompat?.release()
                   mediaSessionCompat = null
@@ -1943,5 +1938,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.104
+          name: NKPlayer-v1.0.105
           path: build/app/outputs/flutter-apk/app-release.apk
