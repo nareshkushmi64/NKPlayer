@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.103)
+name: NKPlayer - Background Playback (v1.0.104)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.103+104
+          version: 1.0.104+105
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -504,25 +504,24 @@ jobs:
                       .setPriority(NotificationCompat.PRIORITY_LOW)
                       .addAction(NotificationCompat.Action.Builder(
                           android.R.drawable.ic_media_previous, "Prev", pi(0, ACTION_PREV))
-                          .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_SKIP_TO_PREVIOUS)
+                          .setSemanticAction(1)
                           .build())
                       .addAction(NotificationCompat.Action.Builder(
                           R.drawable.ic_rewind_10, "Rewind 10 seconds", pi(1, ACTION_REWIND))
-                          .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REWIND)
+                          .setSemanticAction(2)
                           .build())
                       .addAction(NotificationCompat.Action.Builder(
                           playIcon, playLabel, pi(2, ACTION_PLAY_PAUSE))
                           .setSemanticAction(
-                              if (playing) NotificationCompat.Action.SEMANTIC_ACTION_PAUSE
-                              else         NotificationCompat.Action.SEMANTIC_ACTION_PLAY)
+                              if (playing) 5 else 4)
                           .build())
                       .addAction(NotificationCompat.Action.Builder(
                           R.drawable.ic_forward_10, "Fast forward 10 seconds", pi(3, ACTION_FORWARD))
-                          .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_FAST_FORWARD)
+                          .setSemanticAction(8)
                           .build())
                       .addAction(NotificationCompat.Action.Builder(
                           android.R.drawable.ic_media_next, "Next", pi(4, ACTION_NEXT))
-                          .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_SKIP_TO_NEXT)
+                          .setSemanticAction(9)
                           .build())
                       .setStyle(style)
                       .build()
@@ -1944,5 +1943,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.103
+          name: NKPlayer-v1.0.104
           path: build/app/outputs/flutter-apk/app-release.apk
