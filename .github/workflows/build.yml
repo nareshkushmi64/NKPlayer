@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.94)
+name: NKPlayer - Background Playback (v1.0.95)
 on: [push]
 
 jobs:
@@ -39,7 +39,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.94+95
+          version: 1.0.95+96
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -51,7 +51,6 @@ jobs:
             google_fonts: ^6.1.0
             device_info_plus: ^10.1.0
             share_plus: ^7.2.2
-            file_picker: ^6.1.1
           flutter:
             uses-material-design: true
           PUBSPEC
@@ -577,7 +576,6 @@ jobs:
           import 'package:google_fonts/google_fonts.dart';
           import 'package:device_info_plus/device_info_plus.dart';
           import 'package:share_plus/share_plus.dart';
-          import 'package:file_picker/file_picker.dart';
 
           const _ch = MethodChannel('com.nareshkushmi.nkplayer/music');
 
@@ -1136,15 +1134,142 @@ jobs:
               );
             }
 
-            // Pick destination folder then copy/move
+            // Custom folder browser — reads /storage/emulated/0 directly
+            Future<String?> _browseFolders(BuildContext context, String title) async {
+              String currentPath = '/storage/emulated/0';
+              String? selected;
+
+              await showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: const Color(0xFF1E1E1E),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                builder: (ctx) => StatefulBuilder(
+                  builder: (ctx, setModal) {
+                    List<FileSystemEntity> dirs = [];
+                    try {
+                      dirs = Directory(currentPath)
+                          .listSync()
+                          .whereType<Directory>()
+                          .where((d) {
+                            final name = d.path.split('/').last;
+                            return !name.startsWith('.');
+                          })
+                          .toList()
+                          ..sort((a, b) => a.path
+                              .split('/').last
+                              .compareTo(b.path.split('/').last));
+                    } catch (_) {}
+
+                    final parts = currentPath
+                        .replaceFirst('/storage/emulated/0', 'Storage')
+                        .split('/');
+
+                    return SizedBox(
+                      height: MediaQuery.of(context).size.height * 0.75,
+                      child: Column(
+                        children: [
+                          // Header
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                            child: Row(children: [
+                              Expanded(
+                                child: Text(title,
+                                    style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  selected = currentPath;
+                                  Navigator.pop(ctx);
+                                },
+                                child: const Text('Select here',
+                                    style: TextStyle(color: Colors.blueAccent)),
+                              ),
+                            ]),
+                          ),
+                          // Breadcrumb
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 4),
+                            child: Row(
+                              children: parts.asMap().entries.map((e) {
+                                final idx = e.key;
+                                final part = e.value;
+                                final isLast = idx == parts.length - 1;
+                                return GestureDetector(
+                                  onTap: isLast ? null : () {
+                                    // Navigate to that breadcrumb level
+                                    final newParts = parts.sublist(0, idx + 1);
+                                    String newPath = newParts.join('/');
+                                    if (newPath == 'Storage') {
+                                      newPath = '/storage/emulated/0';
+                                    } else {
+                                      newPath = newPath.replaceFirst(
+                                          'Storage', '/storage/emulated/0');
+                                    }
+                                    setModal(() => currentPath = newPath);
+                                  },
+                                  child: Row(children: [
+                                    Text(part,
+                                        style: TextStyle(
+                                            color: isLast
+                                                ? Colors.white
+                                                : Colors.blueAccent,
+                                            fontSize: 13)),
+                                    if (!isLast)
+                                      const Icon(Icons.chevron_right,
+                                          size: 16, color: Colors.grey),
+                                  ]),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                          const Divider(height: 1),
+                          // Folder list
+                          Expanded(
+                            child: dirs.isEmpty
+                                ? const Center(
+                                    child: Text('No subfolders',
+                                        style: TextStyle(color: Colors.grey)))
+                                : ListView.builder(
+                                    itemCount: dirs.length,
+                                    itemBuilder: (_, i) {
+                                      final name =
+                                          dirs[i].path.split('/').last;
+                                      return ListTile(
+                                        leading: const Icon(Icons.folder,
+                                            color: Colors.amber),
+                                        title: Text(name),
+                                        trailing: const Icon(
+                                            Icons.chevron_right,
+                                            color: Colors.grey),
+                                        onTap: () => setModal(
+                                            () => currentPath = dirs[i].path),
+                                      );
+                                    },
+                                  ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              );
+              return selected;
+            }
+
             Future<void> _pickFolderAndOperate(
                 BuildContext context, SongModel song, String op) async {
-              // Open device folder picker — any folder on storage
-              final destDir = await FilePicker.platform.getDirectoryPath(
-                dialogTitle: op == 'copy' ? 'Copy to folder' : 'Move to folder',
+              final destDir = await _browseFolders(
+                context,
+                op == 'copy' ? 'Copy to folder' : 'Move to folder',
               );
               if (destDir == null || !context.mounted) return;
-
               try {
                 final srcFile  = File(song.data);
                 final fileName = srcFile.uri.pathSegments.last;
@@ -1288,6 +1413,8 @@ jobs:
                           ]
                         : null,
                   ),
+                  floatingActionButtonLocation:
+                      FloatingActionButtonLocation.startFloat,
                   floatingActionButton: Semantics(
                     label: 'play last button',
                     button: true,
@@ -1332,16 +1459,16 @@ jobs:
                           tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
                           leading: Icon(isS ? Icons.check_circle : Icons.music_note,
                               color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
-                          title: Text(showPos
-                              ? song.title + '  ' + (i + 1).toString() + ' of ' + _filtered.length.toString()
-                              : song.title, maxLines: 1),
-                          subtitle: Text(fmtMs(song.duration),
-                              style: const TextStyle(
-                                  color: Colors.grey, fontSize: 12)),
+                          title: Text(
+                              fmtMs(song.duration) + '  ' +
+                              (showPos
+                                ? song.title + '  ' + (i + 1).toString() + ' of ' + _filtered.length.toString()
+                                : song.title),
+                              maxLines: 1),
                           trailing: _isSel ? null : Semantics(
-                            label: 'more',
+                            label: 'more options button',
                             button: true,
-                            container: true, 
+                            container: true,
                             excludeSemantics: true,
                             child: IconButton(
                               icon: const Icon(Icons.more_vert,
@@ -1672,5 +1799,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.94
+          name: NKPlayer-v1.0.95
           path: build/app/outputs/flutter-apk/app-release.apk
