@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.98)
+name: NKPlayer - Background Playback (v1.0.101)
 on: [push]
 
 jobs:
@@ -21,6 +21,21 @@ jobs:
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle || true
 
+          # Add androidx.media for NotificationCompat.MediaStyle (works on Android 16)
+          python3 -c "
+          path = 'android/app/build.gradle'
+          with open(path) as f: content = f.read()
+          dep = '''    implementation('androidx.media:media:1.7.0') {
+              exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+              exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+          }
+          '''
+          if 'androidx.media' not in content:
+              content = content.replace('dependencies {', 'dependencies {
+' + dep)
+          with open(path, 'w') as f: f.write(content)
+          "
+
           # Upgrade Kotlin plugin version in root build.gradle
           python3 -c "
           path = 'android/build.gradle'
@@ -39,7 +54,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.98+99
+          version: 1.0.101+102
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -92,25 +107,31 @@ jobs:
 
           cat <<'XML' > android/app/src/main/res/drawable/ic_rewind_10.xml
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="24dp" android:height="24dp"
-              android:viewportWidth="24" android:viewportHeight="24">
-            <path android:fillColor="#FFFFFF"
-              android:pathData="M11.99,5V1l-5,5,5,5V7c3.31,0,6,2.69,6,6s-2.69,6-6,6-6-2.69-6-6H4c0,4.42,3.58,8,8,8s8-3.58,8-8-3.58-8-8-8z"/>
-            <text android:fillColor="#FFFFFF"
-              x="8.5" y="16" android:textSize="5sp"/>
-            <path android:fillColor="#FFFFFF"
-              android:pathData="M7.9,14v-1.27L9.07,14h0.64l1.12-1.21V14h0.75v-3H10.8l-1.29,1.47L8.23,11H7.5v3H7.9zM13.7,11h-0.79v3h2.16v-0.63H13.7V11z"/>
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+            <path
+              android:fillColor="#FFFFFF"
+              android:pathData="M12,5V1L7,6l5,5V7c3.31,0,6,2.69,6,6s-2.69,6-6,6-6,-2.69,-6,-6H4c0,4.42,3.58,8,8,8s8,-3.58,8,-8-3.58,-8,-8,-8z"/>
+            <path
+              android:fillColor="#FFFFFF"
+              android:pathData="M7.6,15L7.6,10.5L6.8,10.5L6.8,15L7.6,15zM10.8,15l1.3,-2.2L13.4,15L14.4,15L12.6,12L14.3,9L13.3,9L12.1,11.2L10.9,9L9.9,9L11.5,12L9.7,15L10.8,15z"/>
           </vector>
           XML
 
           cat <<'XML' > android/app/src/main/res/drawable/ic_forward_10.xml
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="24dp" android:height="24dp"
-              android:viewportWidth="24" android:viewportHeight="24">
-            <path android:fillColor="#FFFFFF"
-              android:pathData="M18,13c0,3.31-2.69,6-6,6s-6-2.69-6-6,2.69-6,6-6v4l5-5-5-5v4C7.58,5,4,8.58,4,13s3.58,8,8,8,8-3.58,8-8H18z"/>
-            <path android:fillColor="#FFFFFF"
-              android:pathData="M7.9,14v-1.27L9.07,14h0.64l1.12-1.21V14h0.75v-3H10.8l-1.29,1.47L8.23,11H7.5v3H7.9zM13.7,11h-0.79v3h2.16v-0.63H13.7V11z"/>
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+            <path
+              android:fillColor="#FFFFFF"
+              android:pathData="M12,5V1l5,5-5,5V7C8.69,7,6,9.69,6,13s2.69,6,6,6,6,-2.69,6,-6h2c0,4.42,-3.58,8,-8,8s-8,-3.58,-8,-8,3.58,-8,8,-8z"/>
+            <path
+              android:fillColor="#FFFFFF"
+              android:pathData="M7.6,15L7.6,10.5L6.8,10.5L6.8,15L7.6,15zM10.8,15l1.3,-2.2L13.4,15L14.4,15L12.6,12L14.3,9L13.3,9L12.1,11.2L10.9,9L9.9,9L11.5,12L9.7,15L10.8,15z"/>
           </vector>
           XML
 
@@ -149,6 +170,9 @@ jobs:
           import android.media.session.PlaybackState
           import android.os.Build
           import android.os.IBinder
+          import android.support.v4.media.session.MediaSessionCompat
+          import androidx.core.app.NotificationCompat
+          import androidx.media.app.NotificationCompat.MediaStyle
 
           class MusicService : Service() {
 
@@ -176,6 +200,7 @@ jobs:
 
               private var mp: MediaPlayer? = null
               private var mediaSession: MediaSession? = null
+              private var mediaSessionCompat: MediaSessionCompat? = null
               private var paths:   ArrayList<String> = arrayListOf()
               private var titles:  ArrayList<String> = arrayListOf()
               private var artists: ArrayList<String> = arrayListOf()
@@ -240,6 +265,8 @@ jobs:
                   createChannel()
                   audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
                   requestAudioFocus()
+                  mediaSessionCompat = MediaSessionCompat(this, "NKPlayer")
+                  mediaSessionCompat?.isActive = true
                   mediaSession = MediaSession(this, "NKPlayer").apply {
                       setCallback(object : MediaSession.Callback() {
                           override fun onPlay()         { if (mp?.isPlaying == false) togglePause() }
@@ -457,34 +484,29 @@ jobs:
                   PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
               )
 
-              private fun buildNotif(): Notification {
+              private fun buildNotif(): android.app.Notification {
                   val playIcon = if (playing) android.R.drawable.ic_media_pause
                                  else         android.R.drawable.ic_media_play
                   val playLabel = if (playing) "Pause" else "Play"
 
-                  val builder = Notification.Builder(this, CHANNEL_ID)
+                  val style = MediaStyle()
+                      .setShowActionsInCompactView(1, 2, 3)
+                  mediaSessionCompat?.sessionToken?.let { style.setMediaSession(it) }
+
+                  return NotificationCompat.Builder(this, CHANNEL_ID)
                       .setContentTitle(title)
                       .setContentText(artist)
                       .setSmallIcon(android.R.drawable.ic_media_play)
                       .setOngoing(playing)
-                      .setVisibility(Notification.VISIBILITY_PUBLIC)
-                      .addAction(Notification.Action.Builder(
-                          android.R.drawable.ic_media_previous, "Prev", pi(0, ACTION_PREV)).build())
-                      .addAction(Notification.Action.Builder(
-                          R.drawable.ic_rewind_10, "-10s", pi(1, ACTION_REWIND)).build())
-                      .addAction(Notification.Action.Builder(
-                          playIcon, playLabel, pi(2, ACTION_PLAY_PAUSE)).build())
-                      .addAction(Notification.Action.Builder(
-                          R.drawable.ic_forward_10, "+10s", pi(3, ACTION_FORWARD)).build())
-                      .addAction(Notification.Action.Builder(
-                          android.R.drawable.ic_media_next, "Next", pi(4, ACTION_NEXT)).build())
-
-                  val style = Notification.MediaStyle()
-                      .setShowActionsInCompactView(1, 2, 3)
-                  mediaSession?.sessionToken?.let { style.setMediaSession(it) }
-                  builder.setStyle(style)
-
-                  return builder.build()
+                      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                      .setPriority(NotificationCompat.PRIORITY_LOW)
+                      .addAction(android.R.drawable.ic_media_previous, "Prev",   pi(0, ACTION_PREV))
+                      .addAction(R.drawable.ic_rewind_10,               "-10s",   pi(1, ACTION_REWIND))
+                      .addAction(playIcon,                               playLabel, pi(2, ACTION_PLAY_PAUSE))
+                      .addAction(R.drawable.ic_forward_10,              "+10s",   pi(3, ACTION_FORWARD))
+                      .addAction(android.R.drawable.ic_media_next,      "Next",   pi(4, ACTION_NEXT))
+                      .setStyle(style)
+                      .build()
               }
 
               private fun createChannel() {
@@ -514,6 +536,9 @@ jobs:
                   mediaSession?.isActive = false
                   mediaSession?.release()
                   mediaSession = null
+                  mediaSessionCompat?.isActive = false
+                  mediaSessionCompat?.release()
+                  mediaSessionCompat = null
                   super.onDestroy()
               }
           }
@@ -1900,5 +1925,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.98
+          name: NKPlayer-v1.0.101
           path: build/app/outputs/flutter-apk/app-release.apk
