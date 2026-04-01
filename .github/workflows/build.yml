@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.105)
+name: NKPlayer - Background Playback (v1.0.106)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.105+106
+          version: 1.0.106+107
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -97,38 +97,7 @@ jobs:
 
           mkdir -p android/app/src/main/kotlin/com/nareshkushmi/nkplayer
 
-          # ── Drawable icons for rewind/forward ────────────────────────────────
-          mkdir -p android/app/src/main/res/drawable
 
-          cat <<'XML' > android/app/src/main/res/drawable/ic_rewind_10.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="24dp"
-              android:height="24dp"
-              android:viewportWidth="24"
-              android:viewportHeight="24">
-            <path
-              android:fillColor="#FFFFFF"
-              android:pathData="M12,5V1L7,6l5,5V7c3.31,0,6,2.69,6,6s-2.69,6-6,6-6,-2.69,-6,-6H4c0,4.42,3.58,8,8,8s8,-3.58,8,-8-3.58,-8,-8,-8z"/>
-            <path
-              android:fillColor="#FFFFFF"
-              android:pathData="M7.6,15L7.6,10.5L6.8,10.5L6.8,15L7.6,15zM10.8,15l1.3,-2.2L13.4,15L14.4,15L12.6,12L14.3,9L13.3,9L12.1,11.2L10.9,9L9.9,9L11.5,12L9.7,15L10.8,15z"/>
-          </vector>
-          XML
-
-          cat <<'XML' > android/app/src/main/res/drawable/ic_forward_10.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="24dp"
-              android:height="24dp"
-              android:viewportWidth="24"
-              android:viewportHeight="24">
-            <path
-              android:fillColor="#FFFFFF"
-              android:pathData="M12,5V1l5,5-5,5V7C8.69,7,6,9.69,6,13s2.69,6,6,6,6,-2.69,6,-6h2c0,4.42,-3.58,8,-8,8s-8,-3.58,-8,-8,3.58,-8,8,-8z"/>
-            <path
-              android:fillColor="#FFFFFF"
-              android:pathData="M7.6,15L7.6,10.5L6.8,10.5L6.8,15L7.6,15zM10.8,15l1.3,-2.2L13.4,15L14.4,15L12.6,12L14.3,9L13.3,9L12.1,11.2L10.9,9L9.9,9L11.5,12L9.7,15L10.8,15z"/>
-          </vector>
-          XML
 
           # ── MusicReceiver.kt ──────────────────────────────────────────────────
           cat <<'KT' > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MusicReceiver.kt
@@ -505,7 +474,7 @@ jobs:
                           .setSemanticAction(1)
                           .build())
                       .addAction(NotificationCompat.Action.Builder(
-                          R.drawable.ic_rewind_10, "Rewind 10 seconds", pi(1, ACTION_REWIND))
+                          android.R.drawable.ic_media_play, "Rewind 10 seconds", pi(1, ACTION_REWIND))
                           .setSemanticAction(2)
                           .build())
                       .addAction(NotificationCompat.Action.Builder(
@@ -514,7 +483,7 @@ jobs:
                               if (playing) 5 else 4)
                           .build())
                       .addAction(NotificationCompat.Action.Builder(
-                          R.drawable.ic_forward_10, "Fast forward 10 seconds", pi(3, ACTION_FORWARD))
+                          android.R.drawable.ic_media_play, "Fast forward 10 seconds", pi(3, ACTION_FORWARD))
                           .setSemanticAction(8)
                           .build())
                       .addAction(NotificationCompat.Action.Builder(
@@ -1938,5 +1907,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.105
+          name: NKPlayer-v1.0.106
           path: build/app/outputs/flutter-apk/app-release.apk
