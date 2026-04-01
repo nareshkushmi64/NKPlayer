@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.96)
+name: NKPlayer - Background Playback (v1.0.97)
 on: [push]
 
 jobs:
@@ -39,7 +39,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.96+97
+          version: 1.0.97+98
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -220,6 +220,16 @@ jobs:
                           override fun onSkipToNext()   { if (currentIndex < paths.size - 1) { currentIndex++; playTrack() } }
                           override fun onSkipToPrevious() { if (currentIndex > 0) { currentIndex--; playTrack() } }
                           override fun onStop()         { stopAll() }
+                          override fun onRewind()       {
+                              mp?.let { m ->
+                                  m.seekTo((m.currentPosition - 10000).coerceAtLeast(0))
+                              }
+                          }
+                          override fun onFastForward()  {
+                              mp?.let { m ->
+                                  m.seekTo((m.currentPosition + 10000).coerceAtMost(m.duration))
+                              }
+                          }
                       })
                       isActive = true
                   }
@@ -400,7 +410,9 @@ jobs:
                           PlaybackState.ACTION_PAUSE or
                           PlaybackState.ACTION_SKIP_TO_NEXT or
                           PlaybackState.ACTION_SKIP_TO_PREVIOUS or
-                          PlaybackState.ACTION_STOP
+                          PlaybackState.ACTION_STOP or
+                          PlaybackState.ACTION_REWIND or
+                          PlaybackState.ACTION_FAST_FORWARD
                       )
                       .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
                       .build()
@@ -430,18 +442,18 @@ jobs:
                       .setOngoing(playing)
                       .setVisibility(Notification.VISIBILITY_PUBLIC)
                       .addAction(Notification.Action.Builder(
-                          android.R.drawable.ic_media_rew, "-10s", pi(0, ACTION_REWIND)).build())
+                          android.R.drawable.ic_media_previous, "Prev", pi(0, ACTION_PREV)).build())
                       .addAction(Notification.Action.Builder(
-                          playIcon, playLabel, pi(1, ACTION_PLAY_PAUSE)).build())
+                          android.R.drawable.ic_media_rew, "-10s", pi(1, ACTION_REWIND)).build())
                       .addAction(Notification.Action.Builder(
-                          android.R.drawable.ic_media_ff, "+10s", pi(2, ACTION_FORWARD)).build())
+                          playIcon, playLabel, pi(2, ACTION_PLAY_PAUSE)).build())
                       .addAction(Notification.Action.Builder(
-                          android.R.drawable.ic_media_previous, "Prev", pi(3, ACTION_PREV)).build())
+                          android.R.drawable.ic_media_ff, "+10s", pi(3, ACTION_FORWARD)).build())
                       .addAction(Notification.Action.Builder(
                           android.R.drawable.ic_media_next, "Next", pi(4, ACTION_NEXT)).build())
 
                   val style = Notification.MediaStyle()
-                      .setShowActionsInCompactView(0, 1, 2)
+                      .setShowActionsInCompactView(1, 2, 3)
                   mediaSession?.sessionToken?.let { style.setMediaSession(it) }
                   builder.setStyle(style)
 
@@ -1007,7 +1019,8 @@ jobs:
                                         });
                                       } else {
                                         Navigator.push(context, MaterialPageRoute(
-                                            builder: (_) => SongListScreen(folder: f)));
+                                            builder: (_) => SongListScreen(folder: f)))
+                                            .then((_) => _load());
                                       }
                                     },
                                   ),
@@ -1860,5 +1873,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.96
+          name: NKPlayer-v1.0.97
           path: build/app/outputs/flutter-apk/app-release.apk
