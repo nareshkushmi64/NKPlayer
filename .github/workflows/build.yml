@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.0.95)
+name: NKPlayer - Background Playback (v1.0.96)
 on: [push]
 
 jobs:
@@ -39,7 +39,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.0.95+96
+          version: 1.0.96+97
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -133,6 +133,8 @@ jobs:
                   const val ACTION_NEXT       = "com.nareshkushmi.nkplayer.NEXT"
                   const val ACTION_STOP       = "com.nareshkushmi.nkplayer.STOP"
                   const val ACTION_UPDATE     = "com.nareshkushmi.nkplayer.UPDATE"
+                  const val ACTION_REWIND     = "com.nareshkushmi.nkplayer.REWIND"
+                  const val ACTION_FORWARD    = "com.nareshkushmi.nkplayer.FORWARD"
                   const val EXTRA_PATHS       = "paths"
                   const val EXTRA_TITLES      = "titles"
                   const val EXTRA_ARTISTS     = "artists"
@@ -229,6 +231,18 @@ jobs:
                       ACTION_PREV -> { if (currentIndex > 0) { currentIndex--; playTrack() } }
                       ACTION_PLAY_PAUSE -> { togglePause() }
                       ACTION_NEXT -> { if (currentIndex < paths.size - 1) { currentIndex++; playTrack() } }
+                      ACTION_REWIND -> {
+                          mp?.let { m ->
+                              val pos = (m.currentPosition - 10000).coerceAtLeast(0)
+                              m.seekTo(pos)
+                          }
+                      }
+                      ACTION_FORWARD -> {
+                          mp?.let { m ->
+                              val pos = (m.currentPosition + 10000).coerceAtMost(m.duration)
+                              m.seekTo(pos)
+                          }
+                      }
                       "com.nareshkushmi.nkplayer.SEEK" -> {
                           val ms = intent?.getIntExtra("seek_ms", 0) ?: 0
                           mp?.seekTo(ms)
@@ -416,13 +430,15 @@ jobs:
                       .setOngoing(playing)
                       .setVisibility(Notification.VISIBILITY_PUBLIC)
                       .addAction(Notification.Action.Builder(
-                          android.R.drawable.ic_media_previous, "Prev", pi(0, ACTION_PREV)).build())
+                          android.R.drawable.ic_media_rew, "-10s", pi(0, ACTION_REWIND)).build())
                       .addAction(Notification.Action.Builder(
                           playIcon, playLabel, pi(1, ACTION_PLAY_PAUSE)).build())
                       .addAction(Notification.Action.Builder(
-                          android.R.drawable.ic_media_next, "Next", pi(2, ACTION_NEXT)).build())
+                          android.R.drawable.ic_media_ff, "+10s", pi(2, ACTION_FORWARD)).build())
                       .addAction(Notification.Action.Builder(
-                          android.R.drawable.ic_delete, "Stop", pi(3, ACTION_STOP)).build())
+                          android.R.drawable.ic_media_previous, "Prev", pi(3, ACTION_PREV)).build())
+                      .addAction(Notification.Action.Builder(
+                          android.R.drawable.ic_media_next, "Next", pi(4, ACTION_NEXT)).build())
 
                   val style = Notification.MediaStyle()
                       .setShowActionsInCompactView(0, 1, 2)
@@ -533,12 +549,28 @@ jobs:
                               })
                               result.success(null)
                           }
+                          "rewind" -> {
+                              startService(Intent(this, MusicService::class.java).apply {
+                                  action = MusicService.ACTION_REWIND })
+                              result.success(null)
+                          }
+                          "forward" -> {
+                              startService(Intent(this, MusicService::class.java).apply {
+                                  action = MusicService.ACTION_FORWARD })
+                              result.success(null)
+                          }
                           "setSpeed" -> {
                               val speed = (call.argument<Double>("speed") ?: 1.0).toFloat()
                               startService(Intent(this, MusicService::class.java).apply {
                                   action = "com.nareshkushmi.nkplayer.SPEED"
                                   putExtra("speed", speed)
                               })
+                              result.success(null)
+                          }
+                          "scanFile" -> {
+                              val path = call.argument<String>("path") ?: ""
+                              android.media.MediaScannerConnection.scanFile(
+                                  this, arrayOf(path), null, null)
                               result.success(null)
                           }
                           "getLastPlayed" -> {
@@ -1135,7 +1167,7 @@ jobs:
             }
 
             // Custom folder browser — reads /storage/emulated/0 directly
-            Future<String?> _browseFolders(BuildContext context, String title) async {
+            Future<String?> _browseFolders(BuildContext context, String title, String op) async {
               String currentPath = '/storage/emulated/0';
               String? selected;
 
@@ -1186,8 +1218,8 @@ jobs:
                                   selected = currentPath;
                                   Navigator.pop(ctx);
                                 },
-                                child: const Text('Select here',
-                                    style: TextStyle(color: Colors.blueAccent)),
+                                child: Text(op == 'copy' ? 'Copy here' : 'Move here',
+                                    style: const TextStyle(color: Colors.blueAccent)),
                               ),
                             ]),
                           ),
@@ -1268,6 +1300,7 @@ jobs:
               final destDir = await _browseFolders(
                 context,
                 op == 'copy' ? 'Copy to folder' : 'Move to folder',
+                op,
               );
               if (destDir == null || !context.mounted) return;
               try {
@@ -1276,14 +1309,15 @@ jobs:
                 final destFile = File(destDir + '/' + fileName);
                 if (op == 'copy') {
                   await srcFile.copy(destFile.path);
+                  // Scan new file so media library picks it up with metadata
+                  try { await _ch.invokeMethod('scanFile', {'path': destFile.path}); } catch (_) {}
                   if (context.mounted)
                     ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Copied successfully')));
                 } else {
                   await srcFile.rename(destFile.path);
-                  setState(() {
-                    _filtered.removeWhere((s) => s.data == song.data);
-                  });
+                  try { await _ch.invokeMethod('scanFile', {'path': destFile.path}); } catch (_) {}
+                  setState(() => _filtered.removeWhere((s) => s.data == song.data));
                   if (context.mounted)
                     ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Moved successfully')));
@@ -1466,7 +1500,7 @@ jobs:
                                 : song.title),
                               maxLines: 1),
                           trailing: _isSel ? null : Semantics(
-                            label: 'more options button',
+                            label: 'more button',
                             button: true,
                             container: true,
                             excludeSemantics: true,
@@ -1671,7 +1705,7 @@ jobs:
                   title: const Text('Now Playing'),
                   actions: [
                     Semantics(
-                      label: 'more options button',
+                      label: 'more button',
                       button: true,
                       excludeSemantics: true,
                       child: PopupMenuButton<String>(
@@ -1747,35 +1781,62 @@ jobs:
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
+                        // Previous
                         Semantics(
-                          label: 'previous song button',
+                          label: 'previous button',
                           button: true,
                           excludeSemantics: true,
                           child: IconButton(
-                            icon: const Icon(Icons.skip_previous, size: 45),
+                            icon: const Icon(Icons.skip_previous, size: 36),
                             onPressed: _idx > 0
                                 ? () => startMusic(widget.songs, _idx - 1)
                                 : null,
                           ),
                         ),
+                        // Rewind 10s
+                        Semantics(
+                          label: 'rewind 10 seconds button',
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(
+                            icon: const Icon(Icons.replay_10, size: 36),
+                            onPressed: () async {
+                              try { await _ch.invokeMethod('rewind'); } catch (_) {}
+                            },
+                          ),
+                        ),
+                        // Play/Pause
                         Semantics(
                           label: _playing ? 'pause button' : 'play button',
                           button: true,
                           excludeSemantics: true,
-                          child: FloatingActionButton.large(
+                          child: FloatingActionButton(
                             backgroundColor: Colors.blueAccent,
                             onPressed: () => togglePlayPause(),
                             child: Icon(
                                 _playing ? Icons.pause : Icons.play_arrow,
-                                size: 50),
+                                size: 40),
                           ),
                         ),
+                        // Forward 10s
                         Semantics(
-                          label: 'next song button',
+                          label: 'fast forward 10 seconds button',
                           button: true,
                           excludeSemantics: true,
                           child: IconButton(
-                            icon: const Icon(Icons.skip_next, size: 45),
+                            icon: const Icon(Icons.forward_10, size: 36),
+                            onPressed: () async {
+                              try { await _ch.invokeMethod('forward'); } catch (_) {}
+                            },
+                          ),
+                        ),
+                        // Next
+                        Semantics(
+                          label: 'next button',
+                          button: true,
+                          excludeSemantics: true,
+                          child: IconButton(
+                            icon: const Icon(Icons.skip_next, size: 36),
                             onPressed: _idx < widget.songs.length - 1
                                 ? () => startMusic(widget.songs, _idx + 1)
                                 : null,
@@ -1799,5 +1860,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.95
+          name: NKPlayer-v1.0.96
           path: build/app/outputs/flutter-apk/app-release.apk
