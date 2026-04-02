@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.1.4)
+name: NKPlayer - Background Playback (v1.1.9)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.1.4+105
+          version: 1.1.9+110
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -97,8 +97,6 @@ jobs:
           "
 
           mkdir -p android/app/src/main/kotlin/com/nareshkushmi/nkplayer
-
-
 
           # ── MusicReceiver.kt ──────────────────────────────────────────────────
           cat <<'KT' > android/app/src/main/kotlin/com/nareshkushmi/nkplayer/MusicReceiver.kt
@@ -620,6 +618,35 @@ jobs:
                                   this, arrayOf(path), null, null)
                               result.success(null)
                           }
+                          "setLastPlayed" -> {
+                              val path   = call.argument<String>("path")   ?: ""
+                              val ms     = call.argument<Int>("ms")        ?: 0
+                              val title  = call.argument<String>("title")  ?: ""
+                              val folder = call.argument<String>("folder") ?: ""
+                              val prefs  = getSharedPreferences("nkplayer_prefs",
+                                  android.content.Context.MODE_PRIVATE)
+                              prefs.edit()
+                                  .putString("last_path",   path)
+                                  .putInt(   "last_ms",     ms)
+                                  .putString("last_title",  title)
+                                  .putString("last_folder", folder)
+                                  .apply()
+                              result.success(null)
+                          }
+                          "getVideoDuration" -> {
+                              val path = call.argument<String>("path") ?: ""
+                              try {
+                                  val retriever = android.media.MediaMetadataRetriever()
+                                  retriever.setDataSource(path)
+                                  val ms = retriever.extractMetadata(
+                                      android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                                      ?.toLongOrNull() ?: 0L
+                                  retriever.release()
+                                  result.success(ms.toInt())
+                              } catch (e: Exception) {
+                                  result.success(0)
+                              }
+                          }
                           "getLastPlayed" -> {
                               val prefs = getSharedPreferences("nkplayer_prefs",
                                   android.content.Context.MODE_PRIVATE)
@@ -650,7 +677,6 @@ jobs:
           import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
-          import 'package:flutter/foundation.dart';
           import 'package:on_audio_query/on_audio_query.dart';
           import 'package:permission_handler/permission_handler.dart';
           import 'package:google_fonts/google_fonts.dart';
@@ -662,7 +688,8 @@ jobs:
 
           bool isVideo(String path) {
             final ext = path.toLowerCase().split('.').last;
-            return ['mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'].contains(ext);
+            const exts = {'mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'};
+            return exts.contains(ext);
           }
 
           // Format milliseconds → "mm:ss"
@@ -696,8 +723,6 @@ jobs:
           Future<void> setPlaybackSpeed(double speed) async {
             try { await _ch.invokeMethod('setSpeed', {'speed': speed}); } catch (_) {}
           }
-
-
 
           // Global setting: show item position (1 of 25)
           final showPositionNotifier = ValueNotifier<bool>(false);
@@ -1129,19 +1154,26 @@ jobs:
                               const SnackBar(content: Text('No last played found.')));
                         return;
                       }
-                      final path = last['path'] as String;
-                      final ms   = last['ms']   as int;
-                      final song = _all.firstWhere(
-                        (s) => s.data == path,
-                        orElse: () => _all.first,
-                      );
-                      final idx = _all.indexOf(song);
-                      if (context.mounted)
+                      final path  = last['path'] as String;
+                      final ms    = last['ms']   as int;
+                      final title = last['title'] as String? ?? path.split('/').last;
+                      if (!context.mounted) return;
+                      if (isVideo(path)) {
+                        Navigator.push(context, MaterialPageRoute(
+                            builder: (_) => VideoPlayerScreen(
+                                path: path, title: title, seekMs: ms)));
+                      } else {
+                        final song = _all.firstWhere(
+                          (s) => s.data == path,
+                          orElse: () => _all.first,
+                        );
+                        final idx = _all.indexOf(song);
                         Navigator.push(context, MaterialPageRoute(
                             builder: (_) => PlayerScreen(
                                 songs: _all,
                                 initialIndex: idx,
                                 seekOnStartMs: ms)));
+                      }
                     },
                   ),
                 ),
@@ -1162,6 +1194,7 @@ jobs:
             bool _isSel = false;
             List<SongModel> _filtered = [];
             List<String> _filteredVideos = [];
+            final Map<String, int> _videoDurations = {};
 
             @override
             void initState() {
@@ -1175,6 +1208,20 @@ jobs:
                     _filteredVideos = widget.folder.videoPaths.where((p) =>
                         p.split('/').last.toLowerCase().contains(q)).toList();
                   }));
+              _loadVideoDurations();
+            }
+
+            Future<void> _loadVideoDurations() async {
+              for (final path in widget.folder.videoPaths) {
+                if (_videoDurations.containsKey(path)) continue;
+                try {
+                  final ms = await _ch.invokeMethod<int>(
+                      'getVideoDuration', {'path': path});
+                  if (ms != null && ms > 0 && mounted) {
+                    setState(() => _videoDurations[path] = ms);
+                  }
+                } catch (_) {}
+              }
             }
 
             @override
@@ -1488,6 +1535,31 @@ jobs:
                             style: const TextStyle(fontWeight: FontWeight.bold)),
                       ),
                       const Divider(height: 1),
+                      // Copy
+                      Semantics(
+                        label: 'copy button', button: true, excludeSemantics: true,
+                        child: ListTile(
+                          leading: const Icon(Icons.copy, color: Colors.blueAccent),
+                          title: const Text('Copy to folder'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _pickFolderAndOperateVideo(context, path, name, 'copy');
+                          },
+                        ),
+                      ),
+                      // Move
+                      Semantics(
+                        label: 'move button', button: true, excludeSemantics: true,
+                        child: ListTile(
+                          leading: const Icon(Icons.drive_file_move, color: Colors.orange),
+                          title: const Text('Move to folder'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _pickFolderAndOperateVideo(context, path, name, 'move');
+                          },
+                        ),
+                      ),
+                      // Share
                       Semantics(
                         label: 'share button', button: true, excludeSemantics: true,
                         child: ListTile(
@@ -1499,6 +1571,7 @@ jobs:
                           },
                         ),
                       ),
+                      // Delete
                       Semantics(
                         label: 'delete button', button: true, excludeSemantics: true,
                         child: ListTile(
@@ -1525,6 +1598,7 @@ jobs:
                             if (ok == true) {
                               try {
                                 await File(path).delete();
+                                try { await _ch.invokeMethod('scanFile', {'path': path}); } catch (_) {}
                                 setState(() => _filteredVideos.remove(path));
                               } catch (_) {}
                             }
@@ -1535,6 +1609,38 @@ jobs:
                   ),
                 ),
               );
+            }
+
+            Future<void> _pickFolderAndOperateVideo(
+                BuildContext context, String path, String name, String op) async {
+              final destDir = await _browseFolders(
+                context,
+                op == 'copy' ? 'Copy to folder' : 'Move to folder',
+                op,
+              );
+              if (destDir == null || !context.mounted) return;
+              try {
+                final srcFile  = File(path);
+                final destFile = File(destDir + '/' + name);
+                if (op == 'copy') {
+                  await srcFile.copy(destFile.path);
+                  try { await _ch.invokeMethod('scanFile', {'path': destFile.path}); } catch (_) {}
+                  if (context.mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied successfully')));
+                } else {
+                  await srcFile.rename(destFile.path);
+                  try { await _ch.invokeMethod('scanFile', {'path': destFile.path}); } catch (_) {}
+                  setState(() => _filteredVideos.remove(path));
+                  if (context.mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Moved successfully')));
+                }
+              } catch (e) {
+                if (context.mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error: ' + e.toString())));
+              }
             }
 
             bool _handleBack() {
@@ -1637,19 +1743,26 @@ jobs:
                                 const SnackBar(content: Text('No last played in this folder.')));
                           return;
                         }
-                        final path = last['path'] as String;
-                        final ms   = last['ms']   as int;
-                        final song = widget.folder.songs.firstWhere(
-                          (s) => s.data == path,
-                          orElse: () => widget.folder.songs.first,
-                        );
-                        final idx = widget.folder.songs.indexOf(song);
-                        if (context.mounted)
+                        final path  = last['path'] as String;
+                        final ms    = last['ms']   as int;
+                        final title = last['title'] as String? ?? path.split('/').last;
+                        if (!context.mounted) return;
+                        if (isVideo(path)) {
+                          Navigator.push(context, MaterialPageRoute(
+                              builder: (_) => VideoPlayerScreen(
+                                  path: path, title: title, seekMs: ms)));
+                        } else {
+                          final song = widget.folder.songs.firstWhere(
+                            (s) => s.data == path,
+                            orElse: () => widget.folder.songs.first,
+                          );
+                          final idx = widget.folder.songs.indexOf(song);
                           Navigator.push(context, MaterialPageRoute(
                               builder: (_) => PlayerScreen(
                                   songs: widget.folder.songs,
                                   initialIndex: idx,
                                   seekOnStartMs: ms)));
+                        }
                       },
                     ),
                   ),
@@ -1706,15 +1819,17 @@ jobs:
                         final path = _filteredVideos[vi];
                         final name = path.split('/').last;
                         final total = _filtered.length + _filteredVideos.length;
+                        final vDur = _videoDurations[path];
                         return ValueListenableBuilder<bool>(
                           valueListenable: showPositionNotifier,
                           builder: (ctx, showPos, _) => ListTile(
                             leading: Icon(Icons.videocam,
                                 color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
                             title: Text(
-                                showPos
+                                fmtMs(vDur) + '  ' +
+                                (showPos
                                   ? name + '  ' + (i + 1).toString() + ' of ' + total.toString()
-                                  : name,
+                                  : name),
                                 maxLines: 1),
                             trailing: Semantics(
                               label: 'more button',
@@ -1728,7 +1843,7 @@ jobs:
                             ),
                             onTap: () => Navigator.push(context, MaterialPageRoute(
                                 builder: (_) => VideoPlayerScreen(
-                                    path: path, title: name))),
+                                    path: path, title: name, seekMs: 0))),
                           ),
                         );
                       }
@@ -1743,7 +1858,8 @@ jobs:
           class VideoPlayerScreen extends StatefulWidget {
             final String path;
             final String title;
-            const VideoPlayerScreen({super.key, required this.path, required this.title});
+            final int seekMs;
+            const VideoPlayerScreen({super.key, required this.path, required this.title, this.seekMs = 0});
             @override
             State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
           }
@@ -1763,6 +1879,9 @@ jobs:
               _ctrl = VideoPlayerController.file(File(widget.path))
                 ..initialize().then((_) {
                   setState(() => _initialized = true);
+                  if (widget.seekMs > 0) {
+                    _ctrl.seekTo(Duration(milliseconds: widget.seekMs));
+                  }
                   _ctrl.play();
                 });
               _ctrl.addListener(() { if (mounted) setState(() {}); });
@@ -1770,14 +1889,19 @@ jobs:
 
             @override
             void dispose() {
+              // Save last played position for video
+              final posMs = _ctrl.value.position.inMilliseconds;
+              if (posMs > 0) {
+                final folder = File(widget.path).parent.path.split('/').last;
+                _ch.invokeMethod('setLastPlayed', {
+                  'path':   widget.path,
+                  'ms':     posMs,
+                  'title':  widget.title,
+                  'folder': folder,
+                }).catchError((_) {});
+              }
               _ctrl.dispose();
               super.dispose();
-            }
-
-            String _fmt(Duration d) {
-              final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-              final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-              return m + ':' + s;
             }
 
             void _toggleControls() => setState(() => _showControls = !_showControls);
@@ -1874,10 +1998,10 @@ jobs:
               final maxSec = dur.inSeconds.toDouble() > 0 ? dur.inSeconds.toDouble() : 1.0;
               final curSec = pos.inSeconds.toDouble().clamp(0.0, maxSec);
 
-              return WillPopScope(
-                onWillPop: () async {
-                  if (_isFullscreen) { _toggleFullscreen(); return false; }
-                  return true;
+              return PopScope(
+                canPop: !_isFullscreen,
+                onPopInvoked: (didPop) {
+                  if (!didPop && _isFullscreen) _toggleFullscreen();
                 },
                 child: Scaffold(
                   backgroundColor: Colors.black,
@@ -1982,11 +2106,11 @@ jobs:
                                         mainAxisAlignment:
                                             MainAxisAlignment.spaceBetween,
                                         children: [
-                                          Text(_fmt(pos),
+                                          Text(fmtMs(pos.inMilliseconds),
                                               style: const TextStyle(
                                                   color: Colors.white,
                                                   fontSize: 12)),
-                                          Text(_fmt(dur),
+                                          Text(fmtMs(dur.inMilliseconds),
                                               style: const TextStyle(
                                                   color: Colors.white,
                                                   fontSize: 12)),
@@ -2002,7 +2126,12 @@ jobs:
                                         Semantics(
                                           label: 'brightness slider',
                                           slider: true,
-                                          excludeSemantics: true,
+                                          value: (_brightness * 100).round().toString() + '%',
+                                          increasedValue: ((_brightness + 0.05).clamp(0.0,1.0) * 100).round().toString() + '%',
+                                          decreasedValue: ((_brightness - 0.05).clamp(0.0,1.0) * 100).round().toString() + '%',
+                                          onIncrease: () => setState(() => _brightness = (_brightness + 0.05).clamp(0.0, 1.0)),
+                                          onDecrease: () => setState(() => _brightness = (_brightness - 0.05).clamp(0.0, 1.0)),
+                                          explicitChildNodes: false,
                                           child: Row(children: [
                                             const Icon(Icons.brightness_6,
                                                 color: Colors.white, size: 18),
@@ -2012,9 +2141,10 @@ jobs:
                                                 value: _brightness,
                                                 min: 0, max: 1,
                                                 activeColor: Colors.yellow,
+                                                semanticFormatterCallback: (v) =>
+                                                    (v * 100).round().toString() + '%',
                                                 onChanged: (v) =>
-                                                    setState(() =>
-                                                        _brightness = v),
+                                                    setState(() => _brightness = v),
                                               ),
                                             ),
                                           ]),
@@ -2064,7 +2194,20 @@ jobs:
                                         Semantics(
                                           label: 'volume slider',
                                           slider: true,
-                                          excludeSemantics: true,
+                                          value: (_volume * 100).round().toString() + '%',
+                                          increasedValue: ((_volume + 0.05).clamp(0.0,1.0) * 100).round().toString() + '%',
+                                          decreasedValue: ((_volume - 0.05).clamp(0.0,1.0) * 100).round().toString() + '%',
+                                          onIncrease: () {
+                                            final v = (_volume + 0.05).clamp(0.0, 1.0);
+                                            setState(() => _volume = v);
+                                            _ctrl.setVolume(v);
+                                          },
+                                          onDecrease: () {
+                                            final v = (_volume - 0.05).clamp(0.0, 1.0);
+                                            setState(() => _volume = v);
+                                            _ctrl.setVolume(v);
+                                          },
+                                          explicitChildNodes: false,
                                           child: Row(children: [
                                             const Icon(Icons.volume_up,
                                                 color: Colors.white, size: 18),
@@ -2074,6 +2217,8 @@ jobs:
                                                 value: _volume,
                                                 min: 0, max: 1,
                                                 activeColor: Colors.green,
+                                                semanticFormatterCallback: (v) =>
+                                                    (v * 100).round().toString() + '%',
                                                 onChanged: (v) {
                                                   setState(() => _volume = v);
                                                   _ctrl.setVolume(v);
@@ -2426,5 +2571,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.1.4
+          name: NKPlayer-v1.1.9
           path: build/app/outputs/flutter-apk/app-release.apk
