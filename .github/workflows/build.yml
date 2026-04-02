@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.1.9)
+name: NKPlayer - Background Playback (v1.2.2)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.1.9+110
+          version: 1.2.2+115
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -674,6 +674,7 @@ jobs:
 
           # ── lib/main.dart ─────────────────────────────────────────────────────
           cat <<'DART' > lib/main.dart
+          import 'dart:async';
           import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
@@ -688,7 +689,7 @@ jobs:
 
           bool isVideo(String path) {
             final ext = path.toLowerCase().split('.').last;
-            const exts = {'mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'};
+            const exts = {'mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v','ts','mts','m2ts','vob','rmvb','rm','asf','divx','f4v','ogv','mxf','m2v','mpg','mpeg','mp2','m1v','m4b','3g2','3gpp','3gpp2','amv','nsv','nuv','qt'};
             return exts.contains(ext);
           }
 
@@ -698,7 +699,7 @@ jobs:
             final d = Duration(milliseconds: ms);
             final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
             final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-            return m + ':' + s;
+            return '$m:$s';
           }
 
           Future<void> startMusic(List<SongModel> songs, int index) async {
@@ -760,8 +761,61 @@ jobs:
                   title: 'NKPlayer',
                   debugShowCheckedModeBanner: false,
                   theme: ThemeData.dark().copyWith(
-                    primaryColor: Colors.blueAccent,
-                    scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+                    primaryColor: const Color(0xFF00D4FF),
+                    scaffoldBackgroundColor: const Color(0xFF0A0E1A),
+                    colorScheme: const ColorScheme.dark(
+                      primary:   Color(0xFF00D4FF),
+                      secondary: Color(0xFFBD00FF),
+                      surface:   Color(0xFF111827),
+                      background: Color(0xFF0A0E1A),
+                    ),
+                    appBarTheme: const AppBarTheme(
+                      backgroundColor: Color(0xFF0D1220),
+                      elevation: 0,
+                      centerTitle: false,
+                      titleTextStyle: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                      iconTheme: IconThemeData(color: Color(0xFF00D4FF)),
+                    ),
+                    sliderTheme: SliderThemeData(
+                      activeTrackColor: const Color(0xFF00D4FF),
+                      inactiveTrackColor: const Color(0xFF1E2A3A),
+                      thumbColor: const Color(0xFF00D4FF),
+                      overlayColor: Color(0x2900D4FF),
+                    ),
+                    switchTheme: SwitchThemeData(
+                      thumbColor: MaterialStateProperty.resolveWith(
+                          (s) => s.contains(MaterialState.selected)
+                              ? const Color(0xFF00D4FF) : Colors.grey),
+                      trackColor: MaterialStateProperty.resolveWith(
+                          (s) => s.contains(MaterialState.selected)
+                              ? const Color(0xFF00D4FF).withOpacity(0.4) : Colors.grey.withOpacity(0.3)),
+                    ),
+                    listTileTheme: const ListTileThemeData(
+                      tileColor: Colors.transparent,
+                    ),
+                    dividerColor: Color(0xFF1E2A3A),
+                    cardColor: Color(0xFF111827),
+                    floatingActionButtonTheme: FloatingActionButtonThemeData(
+                      backgroundColor: Color(0xFF00D4FF),
+                      foregroundColor: Color(0xFF0A0E1A),
+                    ),
+                    popupMenuTheme: PopupMenuThemeData(
+                      color: Color(0xFF111827),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12))),
+                    ),
+                    bottomSheetTheme: const BottomSheetThemeData(
+                      backgroundColor: Color(0xFF111827),
+                    ),
+                    snackBarTheme: const SnackBarThemeData(
+                      backgroundColor: Color(0xFF1E2A3A),
+                      contentTextStyle: TextStyle(color: Colors.white),
+                    ),
                   ),
                   home: const PermissionHandlerScreen(),
                 );
@@ -849,7 +903,7 @@ jobs:
                             style: TextStyle(color: Colors.grey, fontSize: 12),
                           ),
                           value: showPos,
-                          activeColor: Colors.blueAccent,
+                          activeColor: const Color(0xFF00D4FF),
                           onChanged: (val) {
                             showPositionNotifier.value = val;
                           },
@@ -916,8 +970,8 @@ jobs:
 
             Future<void> _load() async {
               final songs = await OnAudioQuery().querySongs();
-              final videoExts = {'mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'};
-              final audioExts = {'mp3','m4a','aac','ogg','flac','wav','wma','opus','aiff'};
+              final videoExts = {'mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v','ts','mts','m2ts','vob','rmvb','rm','asf','divx','f4v','ogv','mxf','m2v','mpg','mpeg','mp2','m1v','m4b','3g2','3gpp','3gpp2','amv','nsv','nuv','qt'};
+              final audioExts = {'mp3','m4a','aac','ogg','flac','wav','wma','opus','aiff','aif','ape','alac','ac3','dts','mp2','mka','ra','ram','mid','midi','amr','awb','m4b','m4r','oga','spx','caf','au','snd','gsm','vox','pcm','adts'};
 
               final Map<String, List<SongModel>> audioMap = {};
               for (var s in songs) {
@@ -1050,7 +1104,7 @@ jobs:
                           button: true,
                           excludeSemantics: true,
                           child: IconButton(
-                            icon: const Icon(Icons.search),
+                            icon: const Icon(Icons.search, color: Color(0xFF00D4FF)),
                             onPressed: () {
                               setState(() => _searching = true);
                               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1073,7 +1127,7 @@ jobs:
                               const PopupMenuItem(
                                 value: 'settings',
                                 child: Row(children: [
-                                  Icon(Icons.settings, color: Colors.blueAccent),
+                                  Icon(Icons.settings, color: Color(0xFF00D4FF)),
                                   SizedBox(width: 12),
                                   Text('Settings'),
                                 ]),
@@ -1093,7 +1147,7 @@ jobs:
                                 valueListenable: showPositionNotifier,
                                 builder: (ctx, showPos, _) => ListTile(
                                   leading: const Icon(Icons.music_note,
-                                      color: Colors.blueAccent),
+                                      color: Color(0xFF00D4FF)),
                                   title: Text(showPos
                                       ? _filtered[i].title + '  ' + (i + 1).toString() + ' of ' + _filtered.length.toString()
                                       : _filtered[i].title, maxLines: 1),
@@ -1110,10 +1164,10 @@ jobs:
                                 return ValueListenableBuilder<bool>(
                                   valueListenable: showPositionNotifier,
                                   builder: (ctx, showPos, _) => ListTile(
-                                    tileColor: isFSel ? Colors.blueAccent.withOpacity(0.1) : null,
+                                    tileColor: isFSel ? const Color(0xFF00D4FF).withOpacity(0.1) : null,
                                     leading: Icon(
                                       isFSel ? Icons.check_circle : Icons.folder,
-                                      color: isFSel ? Colors.blueAccent : Colors.amber,
+                                      color: isFSel ? const Color(0xFF00D4FF) : const Color(0xFFFFB300),
                                     ),
                                     title: Text(f.name),
                                     subtitle: Text(showPos
@@ -1136,6 +1190,7 @@ jobs:
                                       }
                                     },
                                   ),
+                                  ),
                                 );
                               }),
                 floatingActionButton: Semantics(
@@ -1143,9 +1198,11 @@ jobs:
                   button: true,
                   excludeSemantics: true,
                   child: FloatingActionButton.extended(
-                    backgroundColor: Colors.blueAccent,
+                    backgroundColor: const Color(0xFF00D4FF),
+                    foregroundColor: const Color(0xFF0A0E1A),
                     icon: const Icon(Icons.history),
-                    label: const Text('Play Last'),
+                    label: const Text('Play Last',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
                     onPressed: () async {
                       final last = await LastPlayedService.load();
                       if (last == null) {
@@ -1235,7 +1292,7 @@ jobs:
             void _showSongOptions(BuildContext context, SongModel song) {
               showModalBottomSheet(
                 context: context,
-                backgroundColor: const Color(0xFF1E1E1E),
+                backgroundColor: const Color(0xFF111827),
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
                 ),
@@ -1259,7 +1316,7 @@ jobs:
                         button: true,
                         excludeSemantics: true,
                         child: ListTile(
-                          leading: const Icon(Icons.copy, color: Colors.blueAccent),
+                          leading: const Icon(Icons.copy, color: Color(0xFF00D4FF)),
                           title: const Text('Copy to folder'),
                           onTap: () {
                             Navigator.pop(ctx);
@@ -1326,7 +1383,7 @@ jobs:
               await showModalBottomSheet(
                 context: context,
                 isScrollControlled: true,
-                backgroundColor: const Color(0xFF1E1E1E),
+                backgroundColor: const Color(0xFF111827),
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
                 ),
@@ -1371,7 +1428,7 @@ jobs:
                                   Navigator.pop(ctx);
                                 },
                                 child: Text(op == 'copy' ? 'Copy here' : 'Move here',
-                                    style: const TextStyle(color: Colors.blueAccent)),
+                                    style: const TextStyle(color: Color(0xFF00D4FF))),
                               ),
                             ]),
                           ),
@@ -1403,7 +1460,7 @@ jobs:
                                         style: TextStyle(
                                             color: isLast
                                                 ? Colors.white
-                                                : Colors.blueAccent,
+                                                : const Color(0xFF00D4FF),
                                             fontSize: 13)),
                                     if (!isLast)
                                       const Icon(Icons.chevron_right,
@@ -1486,7 +1543,7 @@ jobs:
               final confirmed = await showDialog<bool>(
                 context: context,
                 builder: (dctx) => AlertDialog(
-                  backgroundColor: const Color(0xFF1E1E1E),
+                  backgroundColor: const Color(0xFF111827),
                   title: const Text('Delete'),
                   content: Text('Delete "' + song.title + '"? This cannot be undone.'),
                   actions: [
@@ -1521,7 +1578,7 @@ jobs:
             void _showVideoOptions(BuildContext context, String path, String name) {
               showModalBottomSheet(
                 context: context,
-                backgroundColor: const Color(0xFF1E1E1E),
+                backgroundColor: const Color(0xFF111827),
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
                 builder: (ctx) => SafeArea(
@@ -1539,7 +1596,7 @@ jobs:
                       Semantics(
                         label: 'copy button', button: true, excludeSemantics: true,
                         child: ListTile(
-                          leading: const Icon(Icons.copy, color: Colors.blueAccent),
+                          leading: const Icon(Icons.copy, color: Color(0xFF00D4FF)),
                           title: const Text('Copy to folder'),
                           onTap: () {
                             Navigator.pop(ctx);
@@ -1583,7 +1640,7 @@ jobs:
                             final ok = await showDialog<bool>(
                               context: context,
                               builder: (d) => AlertDialog(
-                                backgroundColor: const Color(0xFF1E1E1E),
+                                backgroundColor: const Color(0xFF111827),
                                 title: const Text('Delete'),
                                 content: Text('Delete "' + name + '"? This cannot be undone.'),
                                 actions: [
@@ -1731,9 +1788,11 @@ jobs:
                     button: true,
                     excludeSemantics: true,
                     child: FloatingActionButton.extended(
-                      backgroundColor: Colors.blueAccent,
+                      backgroundColor: const Color(0xFF00D4FF),
+                      foregroundColor: const Color(0xFF0A0E1A),
                       icon: const Icon(Icons.history),
-                      label: const Text('Play Last'),
+                      label: const Text('Play Last',
+                          style: TextStyle(fontWeight: FontWeight.w700)),
                       onPressed: () async {
                         final folderName = widget.folder.name;
                         final last = await LastPlayedService.load(folder: folderName);
@@ -1776,11 +1835,23 @@ jobs:
                         final total = _filtered.length + _filteredVideos.length;
                         return ValueListenableBuilder<bool>(
                           valueListenable: showPositionNotifier,
-                          builder: (ctx, showPos, _) => ListTile(
-                            tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
-                            leading: Icon(
-                              isS ? Icons.check_circle : Icons.music_note,
-                              color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                          builder: (ctx, showPos, _) => AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            decoration: BoxDecoration(
+                              color: isS
+                                  ? const Color(0xFF00D4FF).withOpacity(0.08)
+                                  : Colors.transparent,
+                              border: isS
+                                  ? const Border(left: BorderSide(
+                                      color: Color(0xFF00D4FF), width: 3))
+                                  : null,
+                            ),
+                            child: ListTile(
+                              leading: Icon(
+                                isS ? Icons.check_circle : Icons.music_note,
+                                color: i % 2 == 0
+                                    ? const Color(0xFF00D4FF)
+                                    : const Color(0xFF00D4FF).withOpacity(0.4)),
                             title: Text(
                                 fmtMs(song.duration) + '  ' +
                                 (showPos
@@ -1812,6 +1883,7 @@ jobs:
                               }
                             },
                           ),
+                          ),
                         );
                       } else {
                         // Video item
@@ -1824,7 +1896,7 @@ jobs:
                           valueListenable: showPositionNotifier,
                           builder: (ctx, showPos, _) => ListTile(
                             leading: Icon(Icons.videocam,
-                                color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                                color: i % 2 == 0 ? const Color(0xFF00D4FF) : Colors.grey),
                             title: Text(
                                 fmtMs(vDur) + '  ' +
                                 (showPos
@@ -1872,6 +1944,7 @@ jobs:
             double _brightness = 0.5;
             double _volume = 1.0;
             double _speed = 1.0;
+            Timer? _hideTimer;
 
             @override
             void initState() {
@@ -1883,12 +1956,14 @@ jobs:
                     _ctrl.seekTo(Duration(milliseconds: widget.seekMs));
                   }
                   _ctrl.play();
+                  _startHideTimer();
                 });
               _ctrl.addListener(() { if (mounted) setState(() {}); });
             }
 
             @override
             void dispose() {
+              _hideTimer?.cancel();
               // Save last played position for video
               final posMs = _ctrl.value.position.inMilliseconds;
               if (posMs > 0) {
@@ -1904,10 +1979,24 @@ jobs:
               super.dispose();
             }
 
-            void _toggleControls() => setState(() => _showControls = !_showControls);
+            void _startHideTimer() {
+              _hideTimer?.cancel();
+              _hideTimer = Timer(const Duration(seconds: 3), () {
+                if (mounted) setState(() => _showControls = false);
+              });
+            }
+
+            void _toggleControls() {
+              setState(() => _showControls = !_showControls);
+              if (_showControls) _startHideTimer();
+            }
 
             void _toggleFullscreen() {
-              setState(() => _isFullscreen = !_isFullscreen);
+              setState(() {
+                _isFullscreen = !_isFullscreen;
+                // Hide controls immediately when entering fullscreen
+                if (_isFullscreen) _showControls = false;
+              });
               if (_isFullscreen) {
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
                 SystemChrome.setPreferredOrientations([
@@ -1917,6 +2006,7 @@ jobs:
               } else {
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
                 SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+                setState(() => _showControls = true);
               }
             }
 
@@ -1929,7 +2019,7 @@ jobs:
               double pending = _speed;
               showModalBottomSheet(
                 context: context,
-                backgroundColor: const Color(0xFF1E1E1E),
+                backgroundColor: const Color(0xFF111827),
                 shape: const RoundedRectangleBorder(
                     borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
                 builder: (ctx) => StatefulBuilder(
@@ -1945,7 +2035,7 @@ jobs:
                         Text(pending.toStringAsFixed(2) + 'x',
                             style: const TextStyle(
                                 fontSize: 28, fontWeight: FontWeight.bold,
-                                color: Colors.blueAccent)),
+                                color: Color(0xFF00D4FF))),
                         Slider(
                           value: (pending - 0.5) / 1.5,
                           min: 0, max: 1, divisions: 30,
@@ -1970,7 +2060,7 @@ jobs:
                               label: 'apply button', button: true, excludeSemantics: true,
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blueAccent),
+                                    backgroundColor: const Color(0xFF00D4FF)),
                                 onPressed: () {
                                   setState(() {
                                     _speed = pending;
@@ -2026,7 +2116,13 @@ jobs:
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 4),
-                                color: Colors.black54,
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [Colors.black87, Colors.transparent],
+                                  ),
+                                ),
                                 child: Row(children: [
                                   Semantics(
                                     label: 'back button', button: true,
@@ -2047,14 +2143,29 @@ jobs:
                                         style: const TextStyle(
                                             color: Colors.white, fontSize: 14)),
                                   ),
-                                  // Speed button
+                                  // More options button
                                   Semantics(
-                                    label: 'playback speed button', button: true,
+                                    label: 'more options button', button: true,
                                     excludeSemantics: true,
-                                    child: IconButton(
-                                      icon: const Icon(Icons.speed,
+                                    child: PopupMenuButton<String>(
+                                      icon: const Icon(Icons.more_vert,
                                           color: Colors.white),
-                                      onPressed: _showSpeedDialog,
+                                      tooltip: 'More options',
+                                      color: Color(0xFF111827),
+                                      onSelected: (value) {
+                                        if (value == 'speed') _showSpeedDialog();
+                                      },
+                                      itemBuilder: (ctx) => [
+                                        const PopupMenuItem(
+                                          value: 'speed',
+                                          child: Row(children: [
+                                            Icon(Icons.speed,
+                                                color: Color(0xFF00D4FF)),
+                                            SizedBox(width: 12),
+                                            Text('Playback Speed'),
+                                          ]),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                   // Fullscreen button
@@ -2088,7 +2199,7 @@ jobs:
                                     Slider(
                                       value: curSec,
                                       max: maxSec,
-                                      activeColor: Colors.blueAccent,
+                                      activeColor: const Color(0xFF00D4FF),
                                       semanticFormatterCallback: (v) {
                                         final pct = maxSec > 0
                                             ? (v / maxSec * 100).round()
@@ -2165,19 +2276,30 @@ jobs:
                                               ? 'pause button'
                                               : 'play button',
                                           button: true, excludeSemantics: true,
-                                          child: FloatingActionButton(
-                                            backgroundColor: Colors.blueAccent,
-                                            mini: false,
-                                            onPressed: () => setState(() {
-                                              _ctrl.value.isPlaying
-                                                  ? _ctrl.pause()
-                                                  : _ctrl.play();
-                                            }),
-                                            child: Icon(
-                                              _ctrl.value.isPlaying
-                                                  ? Icons.pause
-                                                  : Icons.play_arrow,
-                                              size: 36),
+                                          child: Container(
+                                            width: 60, height: 60,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              gradient: const LinearGradient(
+                                                colors: [Color(0xFF00D4FF), Color(0xFF0090B8)],
+                                              ),
+                                              boxShadow: [BoxShadow(
+                                                color: Color(0xFF00D4FF).withOpacity(0.4),
+                                                blurRadius: 16)],
+                                            ),
+                                            child: IconButton(
+                                              onPressed: () => setState(() {
+                                                _ctrl.value.isPlaying
+                                                    ? _ctrl.pause()
+                                                    : _ctrl.play();
+                                              }),
+                                              icon: Icon(
+                                                _ctrl.value.isPlaying
+                                                    ? Icons.pause
+                                                    : Icons.play_arrow,
+                                                size: 32,
+                                                color: Color(0xFF0A0E1A)),
+                                            ),
                                           ),
                                         ),
                                         // Forward
@@ -2297,7 +2419,7 @@ jobs:
             String _fmt(Duration d) {
               final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
               final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-              return m + ':' + s;
+              return '$m:$s';
             }
 
             void _showSpeedSheet() {
@@ -2305,7 +2427,7 @@ jobs:
               double pendingSpeed = _speed;
               showModalBottomSheet(
                 context: context,
-                backgroundColor: const Color(0xFF1E1E1E),
+                backgroundColor: const Color(0xFF111827),
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                 ),
@@ -2330,7 +2452,7 @@ jobs:
                           Text(speedLabel,
                               style: TextStyle(
                                   fontSize: 28, fontWeight: FontWeight.bold,
-                                  color: Colors.blueAccent)),
+                                  color: Color(0xFF00D4FF))),
                           const SizedBox(height: 8),
                           // Slow / Fast labels
                           Row(
@@ -2385,7 +2507,7 @@ jobs:
                                   excludeSemantics: true,
                                   child: ElevatedButton(
                                     style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.blueAccent),
+                                        backgroundColor: const Color(0xFF00D4FF)),
                                     onPressed: () async {
                                       setState(() => _speed = pendingSpeed);
                                       await setPlaybackSpeed(pendingSpeed);
@@ -2430,7 +2552,7 @@ jobs:
                             value: 'speed',
                             child: Row(
                               children: [
-                                Icon(Icons.speed, color: Colors.blueAccent),
+                                Icon(Icons.speed, color: Color(0xFF00D4FF)),
                                 SizedBox(width: 12),
                                 Text('Playback Speed'),
                               ],
@@ -2441,25 +2563,61 @@ jobs:
                     ),
                   ],
                 ),
-                body: Column(
+                body: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xFF0D1830), Color(0xFF0A0E1A)],
+                    ),
+                  ),
+                  child: Column(
                   children: [
                     const Spacer(),
-                    const Icon(Icons.music_note, size: 100, color: Colors.blueAccent),
-                    const SizedBox(height: 24),
+                    Container(
+                      width: 180, height: 180,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF00D4FF), Color(0xFFBD00FF)],
+                        ),
+                        boxShadow: [BoxShadow(
+                          color: Color(0xFF00D4FF).withOpacity(0.3),
+                          blurRadius: 40, spreadRadius: 5)],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(0xFF0A0E1A),
+                          ),
+                          child: const Icon(Icons.music_note,
+                              size: 80, color: Color(0xFF00D4FF)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: Text(song.title,
                           textAlign: TextAlign.center,
                           maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.poppins(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
+                              fontSize: 18, fontWeight: FontWeight.w700,
+                              color: Colors.white)),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Text(song.artist ?? 'Unknown Artist',
-                        style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 14, letterSpacing: 0.5)),
                     const Spacer(),
                     // ── Slider ───────────────────────────────────────────
-                    Slider(
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Slider(
                       value: curSec,
                       max: maxSec,
                       semanticFormatterCallback: (v) {
@@ -2474,15 +2632,16 @@ jobs:
                           await _ch.invokeMethod('seek', {'ms': (v * 1000).toInt()});
                         } catch (_) {}
                       },
+                      ),
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(_fmt(_pos),
+                          Text(fmtMs(_pos.inMilliseconds),
                               style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                          Text(_fmt(_dur),
+                          Text(fmtMs(_dur.inMilliseconds),
                               style: const TextStyle(color: Colors.grey, fontSize: 12)),
                         ],
                       ),
@@ -2521,12 +2680,23 @@ jobs:
                           label: _playing ? 'pause button' : 'play button',
                           button: true,
                           excludeSemantics: true,
-                          child: FloatingActionButton(
-                            backgroundColor: Colors.blueAccent,
-                            onPressed: () => togglePlayPause(),
-                            child: Icon(
-                                _playing ? Icons.pause : Icons.play_arrow,
-                                size: 40),
+                          child: Container(
+                            width: 72, height: 72,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF00D4FF), Color(0xFF0090B8)],
+                              ),
+                              boxShadow: [BoxShadow(
+                                color: Color(0xFF00D4FF).withOpacity(0.4),
+                                blurRadius: 20, spreadRadius: 2)],
+                            ),
+                            child: IconButton(
+                              onPressed: () => togglePlayPause(),
+                              icon: Icon(
+                                  _playing ? Icons.pause : Icons.play_arrow,
+                                  size: 38, color: Color(0xFF0A0E1A)),
+                            ),
                           ),
                         ),
                         // Forward 10s
@@ -2557,6 +2727,7 @@ jobs:
                     ),
                     const SizedBox(height: 40),
                   ],
+                  ),
                 ),
               );
             }
@@ -2571,5 +2742,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.1.9
+          name: NKPlayer-v1.2.2
           path: build/app/outputs/flutter-apk/app-release.apk
