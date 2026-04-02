@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.1.1)
+name: NKPlayer - Background Playback (v1.1.2)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.1.1+102
+          version: 1.1.2+103
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -779,7 +779,9 @@ jobs:
           class CustomFolder {
             final String name;
             final List<SongModel> songs;
-            CustomFolder({required this.name, required this.songs});
+            final List<String> videoPaths;
+            CustomFolder({required this.name, required this.songs, this.videoPaths = const []});
+            int get totalCount => songs.length + videoPaths.length;
           }
 
           // ── Settings Screen ──────────────────────────────────────────────────
@@ -889,34 +891,41 @@ jobs:
 
             Future<void> _load() async {
               final songs = await OnAudioQuery().querySongs();
-              // Also scan for video files
               final videoExts = ['mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'];
-              final Map<String, List<SongModel>> map = {};
+
+              // Map: folderPath → audio songs
+              final Map<String, List<SongModel>> audioMap = {};
               for (var s in songs) {
                 if (s.data.isEmpty) continue;
-                map.putIfAbsent(File(s.data).parent.path, () => []).add(s);
+                audioMap.putIfAbsent(File(s.data).parent.path, () => []).add(s);
               }
-              // Scan storage for video files not picked up by on_audio_query
+
+              // Map: folderPath → video paths
+              final Map<String, List<String>> videoMap = {};
               try {
                 final root = Directory('/storage/emulated/0');
                 await for (final entity in root.list(recursive: true, followLinks: false)) {
                   if (entity is File) {
                     final ext = entity.path.toLowerCase().split('.').last;
                     if (videoExts.contains(ext)) {
-                      final dir = entity.parent.path;
-                      // Create a fake SongModel-like entry using path
-                      if (!map.values.any((list) => list.any((s) => s.data == entity.path))) {
-                        map.putIfAbsent(dir, () => []);
-                        // We add a placeholder — video files shown by path
-                      }
+                      videoMap.putIfAbsent(entity.parent.path, () => []).add(entity.path);
                     }
                   }
                 }
               } catch (_) {}
+
+              // Merge both maps into folders
+              final allDirs = <String>{...audioMap.keys, ...videoMap.keys};
+              final folders = allDirs.map((dir) => CustomFolder(
+                name: dir.split('/').last,
+                songs: audioMap[dir] ?? [],
+                videoPaths: videoMap[dir] ?? [],
+              )).toList();
+              folders.sort((a, b) => a.name.compareTo(b.name));
+
               setState(() {
                 _all = songs;
-                _folders = map.entries.map((e) =>
-                    CustomFolder(name: e.key.split('/').last, songs: e.value)).toList();
+                _folders = folders;
                 _loading = false;
               });
             }
@@ -1066,8 +1075,8 @@ jobs:
                                     ),
                                     title: Text(f.name),
                                     subtitle: Text(showPos
-                                        ? '${f.songs.length} files  ' + (i + 1).toString() + ' of ' + _folders.length.toString()
-                                        : '${f.songs.length} files'),
+                                        ? '${f.totalCount} files  ' + (i + 1).toString() + ' of ' + _folders.length.toString()
+                                        : '${f.totalCount} files'),
                                     onLongPress: () => setState(() {
                                       _selFolders.add(i); _isFolderSel = true;
                                     }),
@@ -1135,14 +1144,19 @@ jobs:
             final Set<int> _sel = {};
             bool _isSel = false;
             List<SongModel> _filtered = [];
+            List<String> _filteredVideos = [];
 
             @override
             void initState() {
               super.initState();
               _filtered = widget.folder.songs;
+              _filteredVideos = widget.folder.videoPaths;
               _sc.addListener(() => setState(() {
-                    _filtered = widget.folder.songs.where((s) => s.title
-                        .toLowerCase().contains(_sc.text.toLowerCase())).toList();
+                    final q = _sc.text.toLowerCase();
+                    _filtered = widget.folder.songs.where((s) =>
+                        s.title.toLowerCase().contains(q)).toList();
+                    _filteredVideos = widget.folder.videoPaths.where((p) =>
+                        p.split('/').last.toLowerCase().contains(q)).toList();
                   }));
             }
 
@@ -1440,6 +1454,72 @@ jobs:
               }
             }
 
+            void _showVideoOptions(BuildContext context, String path, String name) {
+              showModalBottomSheet(
+                context: context,
+                backgroundColor: const Color(0xFF1E1E1E),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+                builder: (ctx) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16,16,16,8),
+                        child: Text(name, maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                      const Divider(height: 1),
+                      Semantics(
+                        label: 'share button', button: true, excludeSemantics: true,
+                        child: ListTile(
+                          leading: const Icon(Icons.share, color: Colors.green),
+                          title: const Text('Share'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            Share.shareXFiles([XFile(path)], text: name);
+                          },
+                        ),
+                      ),
+                      Semantics(
+                        label: 'delete button', button: true, excludeSemantics: true,
+                        child: ListTile(
+                          leading: const Icon(Icons.delete, color: Colors.red),
+                          title: const Text('Delete',
+                              style: TextStyle(color: Colors.red)),
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            final ok = await showDialog<bool>(
+                              context: context,
+                              builder: (d) => AlertDialog(
+                                backgroundColor: const Color(0xFF1E1E1E),
+                                title: const Text('Delete'),
+                                content: Text('Delete "' + name + '"? This cannot be undone.'),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(d, false),
+                                      child: const Text('Cancel')),
+                                  TextButton(onPressed: () => Navigator.pop(d, true),
+                                      child: const Text('Delete',
+                                          style: TextStyle(color: Colors.red))),
+                                ],
+                              ),
+                            );
+                            if (ok == true) {
+                              try {
+                                await File(path).delete();
+                                setState(() => _filteredVideos.remove(path));
+                              } catch (_) {}
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
             bool _handleBack() {
               if (_isSel) {
                 setState(() { _sel.clear(); _isSel = false; });
@@ -1557,57 +1637,84 @@ jobs:
                     ),
                   ),
                   body: ListView.builder(
-                    itemCount: _filtered.length,
+                    itemCount: _filtered.length + _filteredVideos.length,
                     itemBuilder: (_, i) {
-                      final isS = _sel.contains(i);
-                      final song = _filtered[i];
-                      return ValueListenableBuilder<bool>(
-                        valueListenable: showPositionNotifier,
-                        builder: (ctx, showPos, _) => ListTile(
-                          tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
-                          leading: Icon(
-                            isS ? Icons.check_circle
-                                : (isVideo(song.data) ? Icons.videocam : Icons.music_note),
-                            color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
-                          title: Text(
-                              fmtMs(song.duration) + '  ' +
-                              (showPos
-                                ? song.title + '  ' + (i + 1).toString() + ' of ' + _filtered.length.toString()
-                                : song.title),
-                              maxLines: 1),
-                          trailing: _isSel ? null : Semantics(
-                            label: 'more button',
-                            button: true,
-                            container: true,
-                            excludeSemantics: true,
-                            child: IconButton(
-                              icon: const Icon(Icons.more_vert,
-                                  color: Colors.grey),
-                              onPressed: () =>
-                                  _showSongOptions(context, song),
+                      // Audio items first, then video items
+                      if (i < _filtered.length) {
+                        final isS = _sel.contains(i);
+                        final song = _filtered[i];
+                        final total = _filtered.length + _filteredVideos.length;
+                        return ValueListenableBuilder<bool>(
+                          valueListenable: showPositionNotifier,
+                          builder: (ctx, showPos, _) => ListTile(
+                            tileColor: isS ? Colors.blueAccent.withOpacity(0.1) : null,
+                            leading: Icon(
+                              isS ? Icons.check_circle : Icons.music_note,
+                              color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                            title: Text(
+                                fmtMs(song.duration) + '  ' +
+                                (showPos
+                                  ? song.title + '  ' + (i + 1).toString() + ' of ' + total.toString()
+                                  : song.title),
+                                maxLines: 1),
+                            trailing: _isSel ? null : Semantics(
+                              label: 'more button',
+                              button: true,
+                              container: true,
+                              excludeSemantics: true,
+                              child: IconButton(
+                                icon: const Icon(Icons.more_vert, color: Colors.grey),
+                                onPressed: () => _showSongOptions(context, song),
+                              ),
                             ),
-                          ),
-                          onLongPress: () =>
-                              setState(() { _sel.add(i); _isSel = true; }),
-                          onTap: () {
-                            if (_isSel) {
-                              setState(() {
-                                if (isS) _sel.remove(i); else _sel.add(i);
-                                _isSel = _sel.isNotEmpty;
-                              });
-                            } else {
-                              if (isVideo(song.data)) {
-                                Navigator.push(context, MaterialPageRoute(
-                                    builder: (_) => VideoPlayerScreen(path: song.data, title: song.title)));
+                            onLongPress: () =>
+                                setState(() { _sel.add(i); _isSel = true; }),
+                            onTap: () {
+                              if (_isSel) {
+                                setState(() {
+                                  if (isS) _sel.remove(i); else _sel.add(i);
+                                  _isSel = _sel.isNotEmpty;
+                                });
                               } else {
                                 Navigator.push(context, MaterialPageRoute(
                                     builder: (_) => PlayerScreen(
                                         songs: _filtered, initialIndex: i)));
                               }
-                            }
-                          },
-                        ),
-                      );
+                            },
+                          ),
+                        );
+                      } else {
+                        // Video item
+                        final vi = i - _filtered.length;
+                        final path = _filteredVideos[vi];
+                        final name = path.split('/').last;
+                        final total = _filtered.length + _filteredVideos.length;
+                        return ValueListenableBuilder<bool>(
+                          valueListenable: showPositionNotifier,
+                          builder: (ctx, showPos, _) => ListTile(
+                            leading: Icon(Icons.videocam,
+                                color: i % 2 == 0 ? Colors.blueAccent : Colors.grey),
+                            title: Text(
+                                showPos
+                                  ? name + '  ' + (i + 1).toString() + ' of ' + total.toString()
+                                  : name,
+                                maxLines: 1),
+                            trailing: Semantics(
+                              label: 'more button',
+                              button: true,
+                              container: true,
+                              excludeSemantics: true,
+                              child: IconButton(
+                                icon: const Icon(Icons.more_vert, color: Colors.grey),
+                                onPressed: () => _showVideoOptions(context, path, name),
+                              ),
+                            ),
+                            onTap: () => Navigator.push(context, MaterialPageRoute(
+                                builder: (_) => VideoPlayerScreen(
+                                    path: path, title: name))),
+                          ),
+                        );
+                      }
                     },
                   ),
                 ));
@@ -2302,5 +2409,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.1.1
+          name: NKPlayer-v1.1.2
           path: build/app/outputs/flutter-apk/app-release.apk
