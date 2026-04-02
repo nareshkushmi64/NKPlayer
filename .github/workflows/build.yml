@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.1.2)
+name: NKPlayer - Background Playback (v1.1.4)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.1.2+103
+          version: 1.1.4+105
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -891,30 +891,47 @@ jobs:
 
             Future<void> _load() async {
               final songs = await OnAudioQuery().querySongs();
-              final videoExts = ['mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'];
+              final videoExts = {'mp4','mkv','avi','mov','wmv','flv','webm','3gp','m4v'};
+              final audioExts = {'mp3','m4a','aac','ogg','flac','wav','wma','opus','aiff'};
 
-              // Map: folderPath → audio songs
               final Map<String, List<SongModel>> audioMap = {};
               for (var s in songs) {
                 if (s.data.isEmpty) continue;
                 audioMap.putIfAbsent(File(s.data).parent.path, () => []).add(s);
               }
 
-              // Map: folderPath → video paths
               final Map<String, List<String>> videoMap = {};
-              try {
-                final root = Directory('/storage/emulated/0');
-                await for (final entity in root.list(recursive: true, followLinks: false)) {
-                  if (entity is File) {
-                    final ext = entity.path.toLowerCase().split('.').last;
-                    if (videoExts.contains(ext)) {
-                      videoMap.putIfAbsent(entity.parent.path, () => []).add(entity.path);
+
+              // Recursive scan — skip hidden/system folders
+              final skipDirs = {
+                'Android', 'data', 'obb', '.thumbnails',
+                'cache', 'Cache', '.cache', 'tmp',
+              };
+
+              Future<void> scanRecursive(Directory dir, int depth) async {
+                if (depth > 8) return; // max 8 levels deep
+                try {
+                  final entities = dir.listSync(followLinks: false);
+                  for (final e in entities) {
+                    if (e is File) {
+                      final ext = e.path.toLowerCase().split('.').last;
+                      if (videoExts.contains(ext)) {
+                        videoMap.putIfAbsent(e.parent.path, () => []).add(e.path);
+                      }
+                    } else if (e is Directory) {
+                      final name = e.path.split('/').last;
+                      if (!name.startsWith('.') && !skipDirs.contains(name)) {
+                        await scanRecursive(e, depth + 1);
+                      }
                     }
                   }
-                }
+                } catch (_) {}
+              }
+
+              try {
+                await scanRecursive(Directory('/storage/emulated/0'), 0);
               } catch (_) {}
 
-              // Merge both maps into folders
               final allDirs = <String>{...audioMap.keys, ...videoMap.keys};
               final folders = allDirs.map((dir) => CustomFolder(
                 name: dir.split('/').last,
@@ -2409,5 +2426,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.1.2
+          name: NKPlayer-v1.1.4
           path: build/app/outputs/flutter-apk/app-release.apk
