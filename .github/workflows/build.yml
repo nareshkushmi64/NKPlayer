@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.2.10)
+name: NKPlayer - Background Playback (v1.2.9)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.2.10+123
+          version: 1.2.9+122
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -2106,39 +2106,10 @@ jobs:
             void _hideControls() {
               _hideTimer?.cancel();
               setState(() => _showControls = false);
-              if (_isFullscreen) {
-                // Re-apply fullscreen settings to prevent orientation reset
-                SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-                SystemChrome.setPreferredOrientations([
-                  DeviceOrientation.landscapeLeft,
-                  DeviceOrientation.landscapeRight,
-                ]);
-              }
-            }
-
-            void _showControlsAgain() {
-              setState(() => _showControls = true);
-              // If fullscreen, maintain landscape orientation
-              if (_isFullscreen) {
-                SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-              }
             }
 
             void _toggleFullscreen() {
-              setState(() {
-                _isFullscreen = !_isFullscreen;
-                // Keep controls visible when toggling fullscreen
-              });
-              if (_isFullscreen) {
-                SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-                SystemChrome.setPreferredOrientations([
-                  DeviceOrientation.landscapeLeft,
-                  DeviceOrientation.landscapeRight,
-                ]);
-              } else {
-                SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-                SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-              }
+              setState(() => _isFullscreen = !_isFullscreen);
             }
 
             void _seek(int seconds) {
@@ -2219,32 +2190,33 @@ jobs:
               final maxSec = dur.inSeconds.toDouble() > 0 ? dur.inSeconds.toDouble() : 1.0;
               final curSec = pos.inSeconds.toDouble().clamp(0.0, maxSec);
 
-              return PopScope(
-                canPop: !_isFullscreen,
-                onPopInvoked: (didPop) {
-                  if (!didPop && _isFullscreen) _toggleFullscreen();
-                },
-                child: Scaffold(
-                  backgroundColor: Colors.black,
-                  body: SafeArea(
-                    top: !_isFullscreen,
-                    bottom: !_isFullscreen,
-                    left: !_isFullscreen,
-                    right: !_isFullscreen,
-                    child: GestureDetector(
-                      onTap: _showControlsAgain,
-                      child: Stack(
-                        children: [
-                          // ── Video ────────────────────────────────────────
-                          Center(
-                            child: _initialized
-                                ? AspectRatio(
-                                    aspectRatio: _ctrl.value.aspectRatio,
-                                    child: VideoPlayer(_ctrl))
-                                : const CircularProgressIndicator(),
-                          ),
-                          // ── Controls overlay ─────────────────────────────
-                          if (_showControls) ...[
+              return Scaffold(
+                backgroundColor: Colors.black,
+                body: Stack(
+                  children: [
+                    // ── Video fills screen ────────────────────────────────
+                    Positioned.fill(
+                      child: _initialized
+                          ? FittedBox(
+                              fit: BoxFit.contain,
+                              child: SizedBox(
+                                width: _ctrl.value.size.width,
+                                height: _ctrl.value.size.height,
+                                child: VideoPlayer(_ctrl),
+                              ),
+                            )
+                          : const Center(child: CircularProgressIndicator()),
+                    ),
+                    // ── Tap anywhere to show controls ─────────────────────
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _showControls = true),
+                        behavior: HitTestBehavior.translucent,
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                    // ── Controls overlay ──────────────────────────────────
+                    if (_showControls) ...[
                             // Top bar
                             Positioned(
                               top: 0, left: 0, right: 0,
@@ -2309,17 +2281,11 @@ jobs:
                                   Semantics(
                                     label: 'hide controls button',
                                     button: true, excludeSemantics: true,
-                                    child: GestureDetector(
-                                      onTap: () {
-                                        _hideControls();
-                                      },
-                                      behavior: HitTestBehavior.opaque,
-                                      child: IconButton(
-                                        icon: const Icon(
-                                          Icons.visibility_off,
-                                          color: Colors.white),
-                                        onPressed: _hideControls,
-                                      ),
+                                    child: IconButton(
+                                      icon: const Icon(
+                                        Icons.visibility_off,
+                                        color: Colors.white),
+                                      onPressed: _hideControls,
                                     ),
                                   ),
                                   // Fullscreen button
@@ -2509,15 +2475,12 @@ jobs:
                                 ),
                               ),
                             ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }
-          }
+                          ],   // end if(_showControls)
+                        ],     // end Stack children
+                      ),       // end Stack
+                    );         // end Scaffold
+                  }
+                }
 
           // ── Equalizer Screen ─────────────────────────────────────────────────
           class EqualizerScreen extends StatefulWidget {
@@ -3086,5 +3049,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.2.10
+          name: NKPlayer-v1.2.9
           path: build/app/outputs/flutter-apk/app-release.apk
