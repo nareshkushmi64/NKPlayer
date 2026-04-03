@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.2.8)
+name: NKPlayer - Background Playback (v1.2.9)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.2.8+121
+          version: 1.2.9+122
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -2106,10 +2106,18 @@ jobs:
             void _hideControls() {
               _hideTimer?.cancel();
               setState(() => _showControls = false);
+              // If fullscreen, re-apply immersive mode to prevent orientation reset
+              if (_isFullscreen) {
+                SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+              }
             }
 
             void _showControlsAgain() {
               setState(() => _showControls = true);
+              // If fullscreen, maintain landscape orientation
+              if (_isFullscreen) {
+                SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+              }
             }
 
             void _toggleFullscreen() {
@@ -3064,5 +3072,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.2.8
+          name: NKPlayer-v1.2.9
           path: build/app/outputs/flutter-apk/app-release.apk
