@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.2.7)
+name: NKPlayer - Background Playback (v1.2.8)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.2.7+120
+          version: 1.2.8+121
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -164,7 +164,7 @@ jobs:
               }
 
               private var mp: MediaPlayer? = null
-              private var eq: Equalizer? = null
+              internal var eq: Equalizer? = null
               private var mediaSessionCompat: MediaSessionCompat? = null
               private var paths:   ArrayList<String> = arrayListOf()
               private var titles:  ArrayList<String> = arrayListOf()
@@ -372,6 +372,19 @@ jobs:
               }
 
               // Save last played directly in Kotlin — works even when Flutter is gone
+              fun getEqInfoMap(): Map<String, Any>? {
+                  return try {
+                      val sourceEq = eq ?: Equalizer(0, 0).also { it.release(); return null }
+                      val bands    = sourceEq.numberOfBands.toInt()
+                      val minLevel = sourceEq.bandLevelRange[0].toInt()
+                      val maxLevel = sourceEq.bandLevelRange[1].toInt()
+                      val freqs    = (0 until bands).map {
+                          sourceEq.getCenterFreq(it.toShort()) / 1000 }
+                      mapOf("bands" to bands, "minLevel" to minLevel,
+                            "maxLevel" to maxLevel, "freqs" to freqs)
+                  } catch (e: Exception) { null }
+              }
+
               private fun saveLastPlayed(posMs: Int) {
                   if (paths.isEmpty() || currentIndex >= paths.size) return
                   val prefs = getSharedPreferences("nkplayer_prefs", Context.MODE_PRIVATE)
@@ -678,28 +691,37 @@ jobs:
                           }
                           "getEqInfo" -> {
                               try {
-                                  // Use running EQ or create temp one for info
-                                  val runningEq = MusicService.instance?.eq
-                                  val tmpEq = if (runningEq != null) null
-                                              else Equalizer(0, 0)
-                                  val sourceEq = runningEq ?: tmpEq!!
-                                  val bands    = sourceEq.numberOfBands.toInt()
-                                  val minLevel = sourceEq.bandLevelRange[0].toInt()
-                                  val maxLevel = sourceEq.bandLevelRange[1].toInt()
-                                  val freqs    = (0 until bands).map {
-                                      sourceEq.getCenterFreq(it.toShort()) / 1000 }
-                                  tmpEq?.release()
-                                  val prefs  = getSharedPreferences("nkplayer_prefs",
-                                      android.content.Context.MODE_PRIVATE)
-                                  val levels = (0 until bands).map {
-                                      prefs.getInt("eq_band_$it", 0) }
-                                  result.success(mapOf(
-                                      "bands"    to bands,
-                                      "minLevel" to minLevel,
-                                      "maxLevel" to maxLevel,
-                                      "freqs"    to freqs,
-                                      "levels"   to levels
-                                  ))
+                                  // Try running service first
+                                  val svc = MusicService.instance
+                                  val baseInfo = svc?.getEqInfoMap()
+                                  if (baseInfo != null) {
+                                      val prefs = getSharedPreferences("nkplayer_prefs",
+                                          android.content.Context.MODE_PRIVATE)
+                                      val bands = baseInfo["bands"] as Int
+                                      val levels = (0 until bands).map {
+                                          prefs.getInt("eq_band_$it", 0) }
+                                      result.success(baseInfo + mapOf("levels" to levels))
+                                  } else {
+                                      // No running service — use temp EQ for band info
+                                      val tmpEq = Equalizer(0, 0)
+                                      val bands    = tmpEq.numberOfBands.toInt()
+                                      val minLevel = tmpEq.bandLevelRange[0].toInt()
+                                      val maxLevel = tmpEq.bandLevelRange[1].toInt()
+                                      val freqs    = (0 until bands).map {
+                                          tmpEq.getCenterFreq(it.toShort()) / 1000 }
+                                      tmpEq.release()
+                                      val prefs = getSharedPreferences("nkplayer_prefs",
+                                          android.content.Context.MODE_PRIVATE)
+                                      val levels = (0 until bands).map {
+                                          prefs.getInt("eq_band_$it", 0) }
+                                      result.success(mapOf(
+                                          "bands"    to bands,
+                                          "minLevel" to minLevel,
+                                          "maxLevel" to maxLevel,
+                                          "freqs"    to freqs,
+                                          "levels"   to levels
+                                      ))
+                                  }
                               } catch (e: Exception) {
                                   result.success(null)
                               }
@@ -3042,5 +3064,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.2.7
+          name: NKPlayer-v1.2.8
           path: build/app/outputs/flutter-apk/app-release.apk
