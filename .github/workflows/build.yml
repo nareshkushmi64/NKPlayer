@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.2.2)
+name: NKPlayer - Background Playback (v1.2.3)
 on: [push]
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
           import re
           c = re.sub(r'kotlin-gradle-plugin:[0-9.]+', 'kotlin-gradle-plugin:1.8.22', c)
           c = re.sub(r\"ext\.kotlin_version\s*=\s*'[^']+'\", \"ext.kotlin_version = '1.8.22'\", c)
-          res = '\nsubprojects {\n    configurations.all {\n        resolutionStrategy {\n            force (\"org.jetbrains.kotlin:kotlin-stdlib:1.8.22\")\n            force (\"org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22\")\n            force (\"org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22\")\n        }\n    }\n}\n'
+          res = '\nallprojects {\n    configurations.all {\n        resolutionStrategy {\n            force (\"org.jetbrains.kotlin:kotlin-stdlib:1.8.22\")\n            force (\"org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22\")\n            force (\"org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22\")\n            force (\"org.jetbrains.kotlin:kotlin-stdlib-common:1.8.22\")\n        }\n    }\n}\n'
           if 'resolutionStrategy' not in c:
               c = c + res
           with open(path, 'w') as f: f.write(c)
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.2.2+115
+          version: 1.2.3+116
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -1163,8 +1163,18 @@ jobs:
                                 final isFSel = _selFolders.contains(i);
                                 return ValueListenableBuilder<bool>(
                                   valueListenable: showPositionNotifier,
-                                  builder: (ctx, showPos, _) => ListTile(
-                                    tileColor: isFSel ? const Color(0xFF00D4FF).withOpacity(0.1) : null,
+                                  builder: (ctx, showPos, _) => AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    decoration: BoxDecoration(
+                                      color: isFSel
+                                          ? const Color(0xFF00D4FF).withOpacity(0.08)
+                                          : Colors.transparent,
+                                      border: isFSel ? const Border(
+                                          left: BorderSide(
+                                              color: Color(0xFF00D4FF), width: 3))
+                                          : null,
+                                    ),
+                                    child: ListTile(
                                     leading: Icon(
                                       isFSel ? Icons.check_circle : Icons.folder,
                                       color: isFSel ? const Color(0xFF00D4FF) : const Color(0xFFFFB300),
@@ -2742,5 +2752,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.2.2
+          name: NKPlayer-v1.2.3
           path: build/app/outputs/flutter-apk/app-release.apk
