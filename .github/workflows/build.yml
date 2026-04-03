@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.2.5)
+name: NKPlayer - Background Playback (v1.2.7)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.2.5+118
+          version: 1.2.7+120
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -160,6 +160,7 @@ jobs:
                   var onSongChanged: ((Int, Boolean) -> Unit)? = null
                   var onPosition: ((Int, Int) -> Unit)? = null
                   var onPauseSave: ((Int, Int) -> Unit)? = null  // (posMs, totalMs)
+                  var instance: MusicService? = null
               }
 
               private var mp: MediaPlayer? = null
@@ -226,6 +227,7 @@ jobs:
 
               override fun onCreate() {
                   super.onCreate()
+                  instance = this
                   createChannel()
                   audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
                   requestAudioFocus()
@@ -537,6 +539,7 @@ jobs:
               }
 
               override fun onDestroy() {
+                  instance = null
                   handler.removeCallbacks(positionRunnable)
                   fadeRunnable?.let { duckHandler.removeCallbacks(it) }
                   abandonAudioFocus()
@@ -555,6 +558,7 @@ jobs:
           package com.nareshkushmi.nkplayer
 
           import android.content.Intent
+          import android.media.audiofx.Equalizer
           import android.os.Build
           import io.flutter.embedding.android.FlutterActivity
           import io.flutter.embedding.engine.FlutterEngine
@@ -673,20 +677,19 @@ jobs:
                               }
                           }
                           "getEqInfo" -> {
-                              // Returns band count, level range, band frequencies, current levels
-                              val eq = MusicService::class.java.getDeclaredField("eq")
-                                  .also { it.isAccessible = true }
-                                  .get(/* get service instance via binding */ null) as? Equalizer
-                              // Use a temp Equalizer to get info
                               try {
-                                  val tmpEq = Equalizer(0, 0)
-                                  val bands = tmpEq.numberOfBands.toInt()
-                                  val minLevel = tmpEq.bandLevelRange[0].toInt()
-                                  val maxLevel = tmpEq.bandLevelRange[1].toInt()
-                                  val freqs = (0 until bands).map {
-                                      tmpEq.getCenterFreq(it.toShort()) / 1000 }
-                                  tmpEq.release()
-                                  val prefs = getSharedPreferences("nkplayer_prefs",
+                                  // Use running EQ or create temp one for info
+                                  val runningEq = MusicService.instance?.eq
+                                  val tmpEq = if (runningEq != null) null
+                                              else Equalizer(0, 0)
+                                  val sourceEq = runningEq ?: tmpEq!!
+                                  val bands    = sourceEq.numberOfBands.toInt()
+                                  val minLevel = sourceEq.bandLevelRange[0].toInt()
+                                  val maxLevel = sourceEq.bandLevelRange[1].toInt()
+                                  val freqs    = (0 until bands).map {
+                                      sourceEq.getCenterFreq(it.toShort()) / 1000 }
+                                  tmpEq?.release()
+                                  val prefs  = getSharedPreferences("nkplayer_prefs",
                                       android.content.Context.MODE_PRIVATE)
                                   val levels = (0 until bands).map {
                                       prefs.getInt("eq_band_$it", 0) }
@@ -2056,7 +2059,6 @@ jobs:
                     _ctrl.seekTo(Duration(milliseconds: widget.seekMs));
                   }
                   _ctrl.play();
-                  _startHideTimer();
                 });
               _ctrl.addListener(() { if (mounted) setState(() {}); });
             }
@@ -2079,23 +2081,19 @@ jobs:
               super.dispose();
             }
 
-            void _startHideTimer() {
+            void _hideControls() {
               _hideTimer?.cancel();
-              _hideTimer = Timer(const Duration(seconds: 3), () {
-                if (mounted) setState(() => _showControls = false);
-              });
+              setState(() => _showControls = false);
             }
 
-            void _toggleControls() {
-              setState(() => _showControls = !_showControls);
-              if (_showControls) _startHideTimer();
+            void _showControlsAgain() {
+              setState(() => _showControls = true);
             }
 
             void _toggleFullscreen() {
               setState(() {
                 _isFullscreen = !_isFullscreen;
-                // Hide controls immediately when entering fullscreen
-                if (_isFullscreen) _showControls = false;
+                // Keep controls visible when toggling fullscreen
               });
               if (_isFullscreen) {
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -2106,7 +2104,6 @@ jobs:
               } else {
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
                 SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-                setState(() => _showControls = true);
               }
             }
 
@@ -2197,7 +2194,7 @@ jobs:
                   backgroundColor: Colors.black,
                   body: SafeArea(
                     child: GestureDetector(
-                      onTap: _toggleControls,
+                      onTap: _showControlsAgain,
                       child: Stack(
                         children: [
                           // ── Video ────────────────────────────────────────
@@ -2268,6 +2265,17 @@ jobs:
                                           ]),
                                         ),
                                       ],
+                                    ),
+                                  ),
+                                  // Hide controls button
+                                  Semantics(
+                                    label: 'hide controls button',
+                                    button: true, excludeSemantics: true,
+                                    child: IconButton(
+                                      icon: const Icon(
+                                        Icons.visibility_off,
+                                        color: Colors.white),
+                                      onPressed: _hideControls,
                                     ),
                                   ),
                                   // Fullscreen button
@@ -3034,5 +3042,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.2.5
+          name: NKPlayer-v1.2.7
           path: build/app/outputs/flutter-apk/app-release.apk
