@@ -1,4 +1,4 @@
-name: NKPlayer - Background Playback (v1.2.9)
+name: NKPlayer - Background Playback (v1.85)
 on: [push]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           cat <<'PUBSPEC' > pubspec.yaml
           name: nkplayer
           description: NKPlayer Pro - Accessible Media Player with Background Playback.
-          version: 1.2.9+122
+          version: 1.85+85
           publish_to: 'none'
           environment:
             sdk: '>=3.0.0 <4.0.0'
@@ -129,7 +129,6 @@ jobs:
           import android.media.AudioFocusRequest
           import android.media.AudioManager
           import android.media.MediaPlayer
-          import android.media.audiofx.Equalizer
           import android.os.Build
           import android.os.IBinder
           import android.support.v4.media.session.MediaSessionCompat
@@ -160,11 +159,9 @@ jobs:
                   var onSongChanged: ((Int, Boolean) -> Unit)? = null
                   var onPosition: ((Int, Int) -> Unit)? = null
                   var onPauseSave: ((Int, Int) -> Unit)? = null  // (posMs, totalMs)
-                  var instance: MusicService? = null
               }
 
               private var mp: MediaPlayer? = null
-              internal var eq: Equalizer? = null
               private var mediaSessionCompat: MediaSessionCompat? = null
               private var paths:   ArrayList<String> = arrayListOf()
               private var titles:  ArrayList<String> = arrayListOf()
@@ -227,7 +224,6 @@ jobs:
 
               override fun onCreate() {
                   super.onCreate()
-                  instance = this
                   createChannel()
                   audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
                   requestAudioFocus()
@@ -279,13 +275,6 @@ jobs:
                               }, 200)
                           }
                       }
-                      "com.nareshkushmi.nkplayer.EQ_BAND" -> {
-                          val band  = intent?.getIntExtra("band",  0) ?: 0
-                          val level = intent?.getIntExtra("level", 0) ?: 0
-                          try {
-                              eq?.setBandLevel(band.toShort(), level.toShort())
-                          } catch (e: Exception) { e.printStackTrace() }
-                      }
                       "com.nareshkushmi.nkplayer.SEEK" -> {
                           val ms = intent?.getIntExtra("seek_ms", 0) ?: 0
                           mp?.seekTo(ms)
@@ -320,20 +309,6 @@ jobs:
                           prepare()
                           setVolume(currentVolume, currentVolume)
                           start()
-                          // Attach equalizer to this audio session
-                          try {
-                              eq?.release()
-                              eq = Equalizer(0, audioSessionId).apply {
-                                  enabled = true
-                                  // Restore saved band levels
-                                  val prefs = getSharedPreferences("nkplayer_prefs", android.content.Context.MODE_PRIVATE)
-                                  val bands = numberOfBands.toInt()
-                                  for (i in 0 until bands) {
-                                      val level = prefs.getInt("eq_band_$i", 0)
-                                      setBandLevel(i.toShort(), level.toShort())
-                                  }
-                              }
-                          } catch (e: Exception) { e.printStackTrace() }
                           setOnCompletionListener {
                               if (currentIndex < paths.size - 1) {
                                   currentIndex++
@@ -372,19 +347,6 @@ jobs:
               }
 
               // Save last played directly in Kotlin — works even when Flutter is gone
-              fun getEqInfoMap(): Map<String, Any>? {
-                  return try {
-                      val sourceEq = eq ?: Equalizer(0, 0).also { it.release(); return null }
-                      val bands    = sourceEq.numberOfBands.toInt()
-                      val minLevel = sourceEq.bandLevelRange[0].toInt()
-                      val maxLevel = sourceEq.bandLevelRange[1].toInt()
-                      val freqs    = (0 until bands).map {
-                          sourceEq.getCenterFreq(it.toShort()) / 1000 }
-                      mapOf("bands" to bands, "minLevel" to minLevel,
-                            "maxLevel" to maxLevel, "freqs" to freqs)
-                  } catch (e: Exception) { null }
-              }
-
               private fun saveLastPlayed(posMs: Int) {
                   if (paths.isEmpty() || currentIndex >= paths.size) return
                   val prefs = getSharedPreferences("nkplayer_prefs", Context.MODE_PRIVATE)
@@ -456,7 +418,6 @@ jobs:
                       m.release()
                   }
                   mp = null
-                  eq?.release(); eq = null
                   playing = false
                   stopForeground(true)
                   stopSelf()
@@ -552,12 +513,10 @@ jobs:
               }
 
               override fun onDestroy() {
-                  instance = null
                   handler.removeCallbacks(positionRunnable)
                   fadeRunnable?.let { duckHandler.removeCallbacks(it) }
                   abandonAudioFocus()
                   mp?.release(); mp = null
-                  eq?.release(); eq = null
                   mediaSessionCompat?.isActive = false
                   mediaSessionCompat?.release()
                   mediaSessionCompat = null
@@ -571,7 +530,6 @@ jobs:
           package com.nareshkushmi.nkplayer
 
           import android.content.Intent
-          import android.media.audiofx.Equalizer
           import android.os.Build
           import io.flutter.embedding.android.FlutterActivity
           import io.flutter.embedding.engine.FlutterEngine
@@ -689,58 +647,6 @@ jobs:
                                   result.success(0)
                               }
                           }
-                          "getEqInfo" -> {
-                              try {
-                                  // Try running service first
-                                  val svc = MusicService.instance
-                                  val baseInfo = svc?.getEqInfoMap()
-                                  if (baseInfo != null) {
-                                      val prefs = getSharedPreferences("nkplayer_prefs",
-                                          android.content.Context.MODE_PRIVATE)
-                                      val bands = baseInfo["bands"] as Int
-                                      val levels = (0 until bands).map {
-                                          prefs.getInt("eq_band_$it", 0) }
-                                      result.success(baseInfo + mapOf("levels" to levels))
-                                  } else {
-                                      // No running service — use temp EQ for band info
-                                      val tmpEq = Equalizer(0, 0)
-                                      val bands    = tmpEq.numberOfBands.toInt()
-                                      val minLevel = tmpEq.bandLevelRange[0].toInt()
-                                      val maxLevel = tmpEq.bandLevelRange[1].toInt()
-                                      val freqs    = (0 until bands).map {
-                                          tmpEq.getCenterFreq(it.toShort()) / 1000 }
-                                      tmpEq.release()
-                                      val prefs = getSharedPreferences("nkplayer_prefs",
-                                          android.content.Context.MODE_PRIVATE)
-                                      val levels = (0 until bands).map {
-                                          prefs.getInt("eq_band_$it", 0) }
-                                      result.success(mapOf(
-                                          "bands"    to bands,
-                                          "minLevel" to minLevel,
-                                          "maxLevel" to maxLevel,
-                                          "freqs"    to freqs,
-                                          "levels"   to levels
-                                      ))
-                                  }
-                              } catch (e: Exception) {
-                                  result.success(null)
-                              }
-                          }
-                          "setEqBand" -> {
-                              val band  = call.argument<Int>("band")  ?: 0
-                              val level = call.argument<Int>("level") ?: 0
-                              // Save to prefs
-                              val prefs = getSharedPreferences("nkplayer_prefs",
-                                  android.content.Context.MODE_PRIVATE)
-                              prefs.edit().putInt("eq_band_$band", level).apply()
-                              // Apply to running service via broadcast
-                              startService(Intent(this, MusicService::class.java).apply {
-                                  action = "com.nareshkushmi.nkplayer.EQ_BAND"
-                                  putExtra("band",  band)
-                                  putExtra("level", level)
-                              })
-                              result.success(null)
-                          }
                           "getLastPlayed" -> {
                               val prefs = getSharedPreferences("nkplayer_prefs",
                                   android.content.Context.MODE_PRIVATE)
@@ -821,27 +727,6 @@ jobs:
 
           // Global setting: show item position (1 of 25)
           final showPositionNotifier = ValueNotifier<bool>(false);
-
-          // Global EQ state (persisted in Kotlin SharedPreferences)
-          class EqService {
-            static Future<Map<String, dynamic>?> getInfo() async {
-              try {
-                final r = await _ch.invokeMethod<Map>('getEqInfo');
-                if (r == null) return null;
-                return {
-                  'bands':    r['bands']    as int,
-                  'minLevel': r['minLevel'] as int,
-                  'maxLevel': r['maxLevel'] as int,
-                  'freqs':    List<int>.from(r['freqs']  as List),
-                  'levels':   List<int>.from(r['levels'] as List),
-                };
-              } catch (_) { return null; }
-            }
-            static Future<void> setBand(int band, int level) async {
-              try { await _ch.invokeMethod('setEqBand', {'band': band, 'level': level}); }
-              catch (_) {}
-            }
-          }
 
           // ── Last Played Service (Kotlin saves, Dart reads via MethodChannel) ─
           class LastPlayedService {
@@ -2081,6 +1966,7 @@ jobs:
                     _ctrl.seekTo(Duration(milliseconds: widget.seekMs));
                   }
                   _ctrl.play();
+                  _startHideTimer();
                 });
               _ctrl.addListener(() { if (mounted) setState(() {}); });
             }
@@ -2103,13 +1989,40 @@ jobs:
               super.dispose();
             }
 
-            void _hideControls() {
+            void _startHideTimer() {
               _hideTimer?.cancel();
-              setState(() => _showControls = false);
+              _hideTimer = Timer(const Duration(seconds: 4), () {
+                if (mounted) setState(() => _showControls = false);
+              });
+            }
+
+            // Call this on any user interaction to reset the auto-hide timer
+            void _resetTimer() {
+              if (_showControls) _startHideTimer();
+            }
+
+            void _toggleControls() {
+              setState(() => _showControls = true);
+              _startHideTimer();
             }
 
             void _toggleFullscreen() {
-              setState(() => _isFullscreen = !_isFullscreen);
+              setState(() {
+                _isFullscreen = !_isFullscreen;
+                // Hide controls immediately when entering fullscreen
+                if (_isFullscreen) _showControls = false;
+              });
+              if (_isFullscreen) {
+                SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+                SystemChrome.setPreferredOrientations([
+                  DeviceOrientation.landscapeLeft,
+                  DeviceOrientation.landscapeRight,
+                ]);
+              } else {
+                SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+                SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+                setState(() => _showControls = true);
+              }
             }
 
             void _seek(int seconds) {
@@ -2190,33 +2103,28 @@ jobs:
               final maxSec = dur.inSeconds.toDouble() > 0 ? dur.inSeconds.toDouble() : 1.0;
               final curSec = pos.inSeconds.toDouble().clamp(0.0, maxSec);
 
-              return Scaffold(
-                backgroundColor: Colors.black,
-                body: Stack(
-                  children: [
-                    // ── Video fills screen ────────────────────────────────
-                    Positioned.fill(
-                      child: _initialized
-                          ? FittedBox(
-                              fit: BoxFit.contain,
-                              child: SizedBox(
-                                width: _ctrl.value.size.width,
-                                height: _ctrl.value.size.height,
-                                child: VideoPlayer(_ctrl),
-                              ),
-                            )
-                          : const Center(child: CircularProgressIndicator()),
-                    ),
-                    // ── Tap anywhere to show controls ─────────────────────
-                    Positioned.fill(
-                      child: GestureDetector(
-                        onTap: () => setState(() => _showControls = true),
-                        behavior: HitTestBehavior.translucent,
-                        child: const SizedBox.expand(),
-                      ),
-                    ),
-                    // ── Controls overlay ──────────────────────────────────
-                    if (_showControls) ...[
+              return PopScope(
+                canPop: !_isFullscreen,
+                onPopInvoked: (didPop) {
+                  if (!didPop && _isFullscreen) _toggleFullscreen();
+                },
+                child: Scaffold(
+                  backgroundColor: Colors.black,
+                  body: SafeArea(
+                    child: GestureDetector(
+                      onTap: _toggleControls,
+                      child: Stack(
+                        children: [
+                          // ── Video ────────────────────────────────────────
+                          Center(
+                            child: _initialized
+                                ? AspectRatio(
+                                    aspectRatio: _ctrl.value.aspectRatio,
+                                    child: VideoPlayer(_ctrl))
+                                : const CircularProgressIndicator(),
+                          ),
+                          // ── Controls overlay ─────────────────────────────
+                          if (_showControls) ...[
                             // Top bar
                             Positioned(
                               top: 0, left: 0, right: 0,
@@ -2261,8 +2169,6 @@ jobs:
                                       color: Color(0xFF111827),
                                       onSelected: (value) {
                                         if (value == 'speed') _showSpeedDialog();
-                                        if (value == 'eq') Navigator.push(context,
-                                            MaterialPageRoute(builder: (_) => const EqualizerScreen()));
                                       },
                                       itemBuilder: (ctx) => [
                                         const PopupMenuItem(
@@ -2275,17 +2181,6 @@ jobs:
                                           ]),
                                         ),
                                       ],
-                                    ),
-                                  ),
-                                  // Hide controls button
-                                  Semantics(
-                                    label: 'hide controls button',
-                                    button: true, excludeSemantics: true,
-                                    child: IconButton(
-                                      icon: const Icon(
-                                        Icons.visibility_off,
-                                        color: Colors.white),
-                                      onPressed: _hideControls,
                                     ),
                                   ),
                                   // Fullscreen button
@@ -2475,191 +2370,12 @@ jobs:
                                 ),
                               ),
                             ),
-                          ],   // end if(_showControls)
-                        ],     // end Stack children
-                      ),       // end Stack
-                    );         // end Scaffold
-                  }
-                }
-
-          // ── Equalizer Screen ─────────────────────────────────────────────────
-          class EqualizerScreen extends StatefulWidget {
-            const EqualizerScreen({super.key});
-            @override
-            State<EqualizerScreen> createState() => _EqualizerScreenState();
-          }
-
-          class _EqualizerScreenState extends State<EqualizerScreen> {
-            int _bands = 0;
-            int _minLevel = -1500;
-            int _maxLevel = 1500;
-            List<int> _freqs = [];
-            List<int> _levels = [];
-            bool _loading = true;
-
-            @override
-            void initState() {
-              super.initState();
-              _loadEq();
-            }
-
-            Future<void> _loadEq() async {
-              final info = await EqService.getInfo();
-              if (info == null || !mounted) return;
-              setState(() {
-                _bands    = info['bands']    as int;
-                _minLevel = info['minLevel'] as int;
-                _maxLevel = info['maxLevel'] as int;
-                _freqs    = info['freqs']    as List<int>;
-                _levels   = List<int>.from(info['levels'] as List<int>);
-                _loading  = false;
-              });
-            }
-
-            String _fmtFreq(int hz) {
-              if (hz >= 1000) return '${(hz / 1000).toStringAsFixed(hz % 1000 == 0 ? 0 : 1)}kHz';
-              return '${hz}Hz';
-            }
-
-            String _fmtLevel(int milliDb) {
-              final db = milliDb / 100.0;
-              return (db >= 0 ? '+' : '') + db.toStringAsFixed(0) + 'dB';
-            }
-
-            Future<void> _resetAll() async {
-              for (int i = 0; i < _bands; i++) {
-                await EqService.setBand(i, 0);
-              }
-              setState(() { _levels = List.filled(_bands, 0); });
-            }
-
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                appBar: AppBar(
-                  title: const Text('Equalizer'),
-                  actions: [
-                    Semantics(
-                      label: 'reset equalizer button',
-                      button: true,
-                      excludeSemantics: true,
-                      child: TextButton(
-                        onPressed: _resetAll,
-                        child: const Text('Reset',
-                            style: TextStyle(color: Color(0xFF00D4FF))),
+                          ],
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
-                body: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _bands == 0
-                        ? const Center(child: Text('Equalizer not available'))
-                        : Container(
-                            decoration: const BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [Color(0xFF0D1830), Color(0xFF0A0E1A)],
-                              ),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Column(
-                                children: [
-                                  const SizedBox(height: 8),
-                                  // EQ bars
-                                  Expanded(
-                                    child: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                                      children: List.generate(_bands, (i) {
-                                        final level = _levels[i];
-                                        final norm = (_maxLevel - _minLevel) > 0
-                                            ? (level - _minLevel) /
-                                              (_maxLevel - _minLevel)
-                                            : 0.5;
-                                        return Expanded(
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 6),
-                                            child: Column(
-                                              children: [
-                                                // dB label
-                                                Text(_fmtLevel(level),
-                                                    style: const TextStyle(
-                                                        color: Color(0xFF00D4FF),
-                                                        fontSize: 10,
-                                                        fontWeight: FontWeight.w600)),
-                                                const SizedBox(height: 4),
-                                                // Vertical slider
-                                                Expanded(
-                                                  child: Semantics(
-                                                    label: _fmtFreq(_freqs[i]) + ' band equalizer slider',
-                                                    slider: true,
-                                                    value: _fmtLevel(level),
-                                                    increasedValue: _fmtLevel(level + 100),
-                                                    decreasedValue: _fmtLevel(level - 100),
-                                                    onIncrease: () async {
-                                                      final v = (level + 100).clamp(_minLevel, _maxLevel);
-                                                      setState(() => _levels[i] = v);
-                                                      await EqService.setBand(i, v);
-                                                    },
-                                                    onDecrease: () async {
-                                                      final v = (level - 100).clamp(_minLevel, _maxLevel);
-                                                      setState(() => _levels[i] = v);
-                                                      await EqService.setBand(i, v);
-                                                    },
-                                                    explicitChildNodes: false,
-                                                    child: RotatedBox(
-                                                      quarterTurns: 3,
-                                                      child: SliderTheme(
-                                                        data: SliderTheme.of(context).copyWith(
-                                                          trackHeight: 4,
-                                                          thumbShape: const RoundSliderThumbShape(
-                                                              enabledThumbRadius: 8),
-                                                          overlayShape: const RoundSliderOverlayShape(
-                                                              overlayRadius: 16),
-                                                          activeTrackColor: const Color(0xFF00D4FF),
-                                                          inactiveTrackColor: const Color(0xFF1E2A3A),
-                                                          thumbColor: const Color(0xFF00D4FF),
-                                                        ),
-                                                        child: Slider(
-                                                          value: norm.toDouble(),
-                                                          min: 0, max: 1,
-                                                          onChanged: (v) {
-                                                            final newLevel = (_minLevel +
-                                                                (v * (_maxLevel - _minLevel)))
-                                                                .round();
-                                                            setState(() => _levels[i] = newLevel);
-                                                          },
-                                                          onChangeEnd: (v) async {
-                                                            final newLevel = (_minLevel +
-                                                                (v * (_maxLevel - _minLevel)))
-                                                                .round();
-                                                            await EqService.setBand(i, newLevel);
-                                                          },
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 8),
-                                                // Frequency label
-                                                Text(_fmtFreq(_freqs[i]),
-                                                    style: TextStyle(
-                                                        color: Colors.white.withOpacity(0.6),
-                                                        fontSize: 10)),
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      }),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
               );
             }
           }
@@ -2837,7 +2553,7 @@ jobs:
                   title: const Text('Now Playing'),
                   actions: [
                     Semantics(
-                      label: 'more options button',
+                      label: 'more button',
                       button: true,
                       excludeSemantics: true,
                       child: PopupMenuButton<String>(
@@ -2845,25 +2561,17 @@ jobs:
                         tooltip: 'More options',
                         onSelected: (value) {
                           if (value == 'speed') _showSpeedSheet();
-                          if (value == 'eq') Navigator.push(context,
-                              MaterialPageRoute(builder: (_) => const EqualizerScreen()));
                         },
                         itemBuilder: (ctx) => [
                           const PopupMenuItem(
                             value: 'speed',
-                            child: Row(children: [
-                              Icon(Icons.speed, color: Color(0xFF00D4FF)),
-                              SizedBox(width: 12),
-                              Text('Playback Speed'),
-                            ]),
-                          ),
-                          const PopupMenuItem(
-                            value: 'eq',
-                            child: Row(children: [
-                              Icon(Icons.equalizer, color: Color(0xFF00D4FF)),
-                              SizedBox(width: 12),
-                              Text('Equalizer'),
-                            ]),
+                            child: Row(
+                              children: [
+                                Icon(Icons.speed, color: Color(0xFF00D4FF)),
+                                SizedBox(width: 12),
+                                Text('Playback Speed'),
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -3049,5 +2757,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.2.9
+          name: NKPlayer-v1.85
           path: build/app/outputs/flutter-apk/app-release.apk
