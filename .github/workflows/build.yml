@@ -1,4 +1,4 @@
-name: NKPlayer - Landscape Video Fix (v1.0.88)
+name: NKPlayer - Landscape Fix (v1.0.89)
 on: [push]
 
 jobs:
@@ -16,8 +16,11 @@ jobs:
       - name: Generate NKPlayer Project
         run: |
           flutter create --org com.nareshkushmi --project-name nkplayer .
+          
+          # Fix: Add video_player dependency to pubspec.yaml
+          flutter pub add video_player
 
-          # Android permissions & orientation settings
+          # Android Settings
           sed -i 's/android:label="nkplayer"/android:label="NKPlayer"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle || true
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle || true
@@ -29,7 +32,6 @@ jobs:
 
           void main() {
             WidgetsFlutterBinding.ensureInitialized();
-            // Default to portrait
             SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
             runApp(const NKPlayerApp());
           }
@@ -58,7 +60,7 @@ jobs:
                     ListTile(
                       leading: const Icon(Icons.video_collection, color: Colors.red),
                       title: const Text("Sample Video"),
-                      subtitle: const Text("Plays in landscape on fullscreen"),
+                      subtitle: const Text("Watch in Fullscreen Landscape"),
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const PlayerPage()),
@@ -90,10 +92,6 @@ jobs:
                 setState(() {});
                 _controller.play();
               });
-              
-              _controller.addListener(() {
-                if (mounted) setState(() {});
-              });
             }
 
             void _toggleFullScreen() {
@@ -102,14 +100,12 @@ jobs:
               });
 
               if (_isFullScreen) {
-                // LOCK LANDSCAPE
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
                 SystemChrome.setPreferredOrientations([
                   DeviceOrientation.landscapeLeft,
                   DeviceOrientation.landscapeRight,
                 ]);
               } else {
-                // BACK TO PORTRAIT
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
                 SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
               }
@@ -136,7 +132,7 @@ jobs:
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      // Video Box
+                      // Video display area
                       Center(
                         child: AspectRatio(
                           aspectRatio: _controller.value.aspectRatio,
@@ -144,9 +140,9 @@ jobs:
                         ),
                       ),
 
-                      // Controls Overlay
+                      // Controls Layer (Always active/touchable when visible)
                       if (_showControls) ...[
-                        Container(color: Colors.black38),
+                        Container(color: Colors.black26), // Slight dimming
                         
                         // Back Button
                         Positioned(
@@ -158,47 +154,54 @@ jobs:
                           ),
                         ),
 
-                        // Center Play/Rewind/Forward
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.replay_10, size: 50, color: Colors.white),
-                              onPressed: () => _controller.seekTo(_controller.value.position - const Duration(seconds: 10)),
-                            ),
-                            const SizedBox(width: 20),
-                            IconButton(
-                              icon: Icon(
-                                _controller.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                                size: 80,
-                                color: Colors.white,
+                        // Center Play Controls
+                        Center(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.replay_10, size: 50, color: Colors.white),
+                                onPressed: () => _controller.seekTo(_controller.value.position - const Duration(seconds: 10)),
                               ),
-                              onPressed: () {
-                                _controller.value.isPlaying ? _controller.pause() : _controller.play();
-                              },
-                            ),
-                            const SizedBox(width: 20),
-                            IconButton(
-                              icon: const Icon(Icons.forward_10, size: 50, color: Colors.white),
-                              onPressed: () => _controller.seekTo(_controller.value.position + const Duration(seconds: 10)),
-                            ),
-                          ],
+                              IconButton(
+                                icon: Icon(
+                                  _controller.value.isPlaying ? Icons.pause_circle : Icons.play_circle,
+                                  size: 80,
+                                  color: Colors.white,
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _controller.value.isPlaying ? _controller.pause() : _controller.play();
+                                  });
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.forward_10, size: 50, color: Colors.white),
+                                onPressed: () => _controller.seekTo(_controller.value.position + const Duration(seconds: 10)),
+                              ),
+                            ],
+                          ),
                         ),
 
-                        // Bottom Bar
+                        // Bottom Seekbar & Fullscreen Toggle
                         Positioned(
                           bottom: 20,
-                          left: 10,
-                          right: 10,
+                          left: 20,
+                          right: 20,
                           child: Column(
                             children: [
                               VideoProgressIndicator(_controller, allowScrubbing: true),
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(
-                                    "${_controller.value.position.toString().split(".")[0]} / ${_controller.value.duration.toString().split(".")[0]}",
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                  ValueListenableBuilder(
+                                    valueListenable: _controller,
+                                    builder: (context, VideoPlayerValue value, child) {
+                                      return Text(
+                                        "${value.position.toString().split(".")[0]} / ${value.duration.toString().split(".")[0]}",
+                                        style: const TextStyle(color: Colors.white),
+                                      );
+                                    },
                                   ),
                                   IconButton(
                                     icon: Icon(_isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen, color: Colors.white, size: 30),
@@ -226,5 +229,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NKPlayer-v1.0.88-landscape
+          name: NKPlayer-v1.0.89-fixed
           path: build/app/outputs/flutter-apk/app-release.apk
